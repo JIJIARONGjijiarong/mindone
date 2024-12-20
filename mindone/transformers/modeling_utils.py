@@ -51,7 +51,7 @@ from transformers.utils import (
 from transformers.utils.hub import convert_file_size_to_int, get_checkpoint_shard_files
 
 import mindspore as ms
-from mindspore import Tensor, nn, ops
+from mindspore import Tensor, nn, mint
 
 from .integrations import PeftAdapterMixin
 from .modeling_attn_mask_utils import dtype_to_min
@@ -72,14 +72,14 @@ def _get_pt2ms_mappings(m):
     for name, cell in m.cells_and_names():
         if isinstance(cell, (nn.Conv1d, nn.Conv1dTranspose)):
             mappings[f"{name}.weight"] = f"{name}.weight", lambda x: ms.Parameter(
-                ops.expand_dims(x, axis=-2), name=x.name
+                mint.unsqueeze(x, dim=-2), name=x.name
             )
         elif isinstance(cell, nn.Embedding):
             mappings[f"{name}.weight"] = f"{name}.embedding_table", lambda x: x
-        elif isinstance(cell, (nn.BatchNorm2d, nn.LayerNorm, nn.GroupNorm)):
+        elif isinstance(cell, (mint.nn.BatchNorm2d, mint.nn.LayerNorm, mint.nn.GroupNorm)):
             mappings[f"{name}.weight"] = f"{name}.gamma", lambda x: x
             mappings[f"{name}.bias"] = f"{name}.beta", lambda x: x
-            if isinstance(cell, (nn.BatchNorm2d,)):
+            if isinstance(cell, (mint.nn.BatchNorm2d,)):
                 mappings[f"{name}.running_mean"] = f"{name}.moving_mean", lambda x: x
                 mappings[f"{name}.running_var"] = f"{name}.moving_variance", lambda x: x
                 mappings[f"{name}.num_batches_tracked"] = None, lambda x: x
@@ -374,22 +374,22 @@ class ModuleUtilsMixin:
     @staticmethod
     def create_extended_attention_mask_for_decoder(input_shape, attention_mask):
         batch_size, seq_length = input_shape
-        seq_ids = ops.arange(seq_length)
+        seq_ids = mint.arange(seq_length)
         causal_mask = seq_ids[None, None, :].tile((batch_size, seq_length, 1)) <= seq_ids[None, :, None]
         causal_mask = causal_mask.to(attention_mask.dtype)
 
         if causal_mask.shape[1] < attention_mask.shape[1]:
             prefix_seq_len = attention_mask.shape[1] - causal_mask.shape[1]
-            causal_mask = ops.cat(
+            causal_mask = mint.cat(
                 [
-                    ops.ones((batch_size, seq_length, prefix_seq_len), dtype=causal_mask.dtype),
+                    mint.ones((batch_size, seq_length, prefix_seq_len), dtype=causal_mask.dtype),
                     causal_mask,
                 ],
-                axis=-1,
+                dim=-1,
             )
 
         # extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
-        extended_attention_mask = ops.mul(causal_mask.unsqueeze(1), attention_mask.unsqueeze(1).unsqueeze(1))
+        extended_attention_mask = mint.mul(causal_mask.unsqueeze(1), attention_mask.unsqueeze(1).unsqueeze(1))
         return extended_attention_mask
 
     def get_extended_attention_mask(
@@ -795,26 +795,26 @@ class MSPreTrainedModel(nn.Cell, ModuleUtilsMixin, PushToHubMixin, PeftAdapterMi
         return new_embeddings
 
     def _get_resized_lm_head(
-        self, old_lm_head: nn.Dense, new_num_tokens: Optional[int] = None, transposed: Optional[bool] = False
-    ) -> nn.Dense:
+        self, old_lm_head: mint.nn.Linear, new_num_tokens: Optional[int] = None, transposed: Optional[bool] = False
+    ) -> mint.nn.Linear:
         """
         Build a resized Linear Module from a provided old Linear Module. Increasing the size will add newly initialized
         vectors at the end. Reducing the size will remove vectors from the end
 
         Args:
-            old_lm_head (`mindspore.nn.Dense`):
+            old_lm_head (`mindspore.mint.nn.Linear`):
                 Old lm head liner layer to be resized.
             new_num_tokens (`int`, *optional*):
                 New number of tokens in the linear matrix.
 
                 Increasing the size will add newly initialized vectors at the end. Reducing the size will remove
                 vectors from the end. If not provided or `None`, just returns a pointer to the input tokens
-                `mindspore.nn.Dense` module of the model without doing anything. transposed (`bool`, *optional*, defaults
+                `mindspore.mint.nn.Linear` module of the model without doing anything. transposed (`bool`, *optional*, defaults
                 to `False`): Whether `old_lm_head` is transposed or not. If True `old_lm_head.size()` is `lm_head_dim,
                 vocab_size` else `vocab_size, lm_head_dim`.
 
         Return:
-            `mindspore.nn.Dense`: Pointer to the resized Linear Module or the old Linear Module if `new_num_tokens` is
+            `mindspore.mint.nn.Linear`: Pointer to the resized Linear Module or the old Linear Module if `new_num_tokens` is
             `None`
         """
         if new_num_tokens is None:
@@ -827,18 +827,18 @@ class MSPreTrainedModel(nn.Cell, ModuleUtilsMixin, PushToHubMixin, PeftAdapterMi
         if old_num_tokens == new_num_tokens:
             return old_lm_head
 
-        if not isinstance(old_lm_head, nn.Dense):
+        if not isinstance(old_lm_head, mint.nn.Linear):
             raise TypeError(
-                f"Old language model head is of type {type(old_lm_head)}, which is not an instance of {nn.Dense}. You"
+                f"Old language model head is of type {type(old_lm_head)}, which is not an instance of {mint.nn.Linear}. You"
                 " should either use a different resize function or make sure that `old_lm_head` are an instance of"
-                f" {nn.Dense}."
+                f" {mint.nn.Linear}."
             )
 
         # Build new lm head
         new_lm_head_shape = (old_lm_head_dim, new_num_tokens) if not transposed else (new_num_tokens, old_lm_head_dim)
         has_new_lm_head_bias = old_lm_head.bias is not None
 
-        new_lm_head = nn.Dense(
+        new_lm_head = mint.nn.Linear(
             *new_lm_head_shape,
             bias=has_new_lm_head_bias,
             dtype=old_lm_head.weight.dtype,
