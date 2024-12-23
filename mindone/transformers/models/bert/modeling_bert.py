@@ -74,9 +74,9 @@ class BertEmbeddings(nn.Cell):
 
     def __init__(self, config):
         super().__init__()
-        self.word_embeddings = mint.nn.functional.embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
-        self.position_embeddings = mint.nn.functional.Embedding(config.max_position_embeddings, config.hidden_size)
-        self.token_type_embeddings = mint.nn.functional.Embedding(config.type_vocab_size, config.hidden_size)
+        self.word_embeddings = mint.nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
+        self.position_embeddings = mint.nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.token_type_embeddings = mint.nn.Embedding(config.type_vocab_size, config.hidden_size)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
@@ -150,7 +150,7 @@ class BertSelfAttention(nn.Cell):
         self.position_embedding_type = position_embedding_type or getattr(config, "position_embedding_type", "absolute")
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
             self.max_position_embeddings = config.max_position_embeddings
-            self.distance_embedding = mint.nn.functional.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
+            self.distance_embedding = mint.nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
         self.is_decoder = config.is_decoder
 
@@ -742,7 +742,7 @@ class BertPreTrainedModel(MSPreTrainedModel):
             )
             if module.bias is not None:
                 module.bias.set_data(initializer(Zero(), module.bias.shape, module.bias.dtype))
-        elif isinstance(module, nn.Embedding):
+        elif isinstance(module, mint.nn.Embedding):
             module.embedding_table.set_data(
                 initializer(
                     Normal(sigma=self.config.initializer_range, mean=0.0),

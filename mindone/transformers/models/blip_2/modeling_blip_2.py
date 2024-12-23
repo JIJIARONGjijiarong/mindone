@@ -325,7 +325,7 @@ class Blip2PreTrainedModel(MSPreTrainedModel):
             )
             if hasattr(module, "bias") and module.bias is not None:
                 module.bias.set_data(initializer(Zero(), shape=module.bias.shape, dtype=module.bias.dtype))
-        elif isinstance(module, nn.Embedding):
+        elif isinstance(module, mint.nn.Embedding):
             module.embedding_table.set_data(
                 initializer(
                     Normal(mean=0.0, sigma=factor),
@@ -534,7 +534,7 @@ class Blip2QFormerMultiHeadAttention(nn.Cell):
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
             self.max_position_embeddings = config.max_position_embeddings
-            self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
+            self.distance_embedding = mint.nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
         self.save_attention = False
 
     def transpose_for_scores(self, x):

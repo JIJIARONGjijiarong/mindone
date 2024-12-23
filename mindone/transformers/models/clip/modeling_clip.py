@@ -170,7 +170,7 @@ class CLIPVisionEmbeddings(nn.Cell):
 
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches + 1
-        self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
+        self.position_embedding = mint.nn.Embedding(self.num_positions, self.embed_dim)
         self.position_ids = mint.arange(self.num_positions).unsqueeze(0)
 
     def construct(self, pixel_values: ms.Tensor) -> ms.Tensor:
@@ -190,8 +190,8 @@ class CLIPTextEmbeddings(nn.Cell):
         super().__init__()
         embed_dim = config.hidden_size
 
-        self.token_embedding = nn.Embedding(config.vocab_size, embed_dim)
-        self.position_embedding = nn.Embedding(config.max_position_embeddings, embed_dim)
+        self.token_embedding = mint.nn.Embedding(config.vocab_size, embed_dim)
+        self.position_embedding = mint.nn.Embedding(config.max_position_embeddings, embed_dim)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
         self.position_ids = mint.arange(config.max_position_embeddings).unsqueeze(0)

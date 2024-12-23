@@ -74,7 +74,7 @@ def _get_pt2ms_mappings(m):
             mappings[f"{name}.weight"] = f"{name}.weight", lambda x: ms.Parameter(
                 mint.unsqueeze(x, dim=-2), name=x.name
             )
-        elif isinstance(cell, nn.Embedding):
+        elif isinstance(cell, mint.nn.Embedding):
             mappings[f"{name}.weight"] = f"{name}.embedding_table", lambda x: x
         elif isinstance(cell, (mint.nn.BatchNorm2d, mint.nn.LayerNorm, mint.nn.GroupNorm)):
             mappings[f"{name}.weight"] = f"{name}.gamma", lambda x: x
@@ -495,7 +495,7 @@ class ModuleUtilsMixin:
             embedding_param_names = [
                 f"{name}.weight"
                 for name, module_type in self.cells_and_names()
-                if isinstance(module_type, nn.Embedding)
+                if isinstance(module_type, mint.nn.Embedding)
             ]
             total_parameters = [
                 parameter for name, parameter in self.parameters_and_names() if name not in embedding_param_names
@@ -668,7 +668,7 @@ class MSPreTrainedModel(nn.Cell, ModuleUtilsMixin, PushToHubMixin, PeftAdapterMi
 
     def resize_token_embeddings(
         self, new_num_tokens: Optional[int] = None, pad_to_multiple_of: Optional[int] = None
-    ) -> nn.Embedding:
+    ) -> mint.nn.Embedding:
         """
         Resizes input token embeddings matrix of the model if `new_num_tokens != config.vocab_size`.
 
@@ -678,13 +678,13 @@ class MSPreTrainedModel(nn.Cell, ModuleUtilsMixin, PushToHubMixin, PeftAdapterMi
             new_num_tokens (`int`, *optional*):
                 The new number of tokens in the embedding matrix. Increasing the size will add newly initialized
                 vectors at the end. Reducing the size will remove vectors from the end. If not provided or `None`, just
-                returns a pointer to the input tokens `torch.nn.Embedding` module of the model without doing anything.
+                returns a pointer to the input tokens `mint.nn.Embedding` module of the model without doing anything.
             pad_to_multiple_of (`int`, *optional*):
                 If set will pad the embedding matrix to a multiple of the provided value.If `new_num_tokens` is set to
                 `None` will just pad the embedding to a multiple of `pad_to_multiple_of`.
 
         Return:
-            `mindspore.nn.Embedding`: Pointer to the input tokens Embeddings Module of the model.
+            `mindspore.mint.nn.Embedding`: Pointer to the input tokens Embeddings Module of the model.
         """
         model_embeds = self._resize_token_embeddings(new_num_tokens, pad_to_multiple_of)
         if new_num_tokens is None and pad_to_multiple_of is None:
@@ -720,29 +720,29 @@ class MSPreTrainedModel(nn.Cell, ModuleUtilsMixin, PushToHubMixin, PeftAdapterMi
 
     def _get_resized_embeddings(
         self,
-        old_embeddings: nn.Embedding,
+        old_embeddings: mint.nn.Embedding,
         new_num_tokens: Optional[int] = None,
         pad_to_multiple_of: Optional[int] = None,
-    ) -> nn.Embedding:
+    ) -> mint.nn.Embedding:
         """
         Build a resized Embedding Module from a provided token Embedding Module. Increasing the size will add newly
         initialized vectors at the end. Reducing the size will remove vectors from the end
 
         Args:
-            old_embeddings (`mindspore.nn.Embedding`):
+            old_embeddings (`mindspore.mint.nn.Embedding`):
                 Old embeddings to be resized.
             new_num_tokens (`int`, *optional*):
                 New number of tokens in the embedding matrix.
 
                 Increasing the size will add newly initialized vectors at the end. Reducing the size will remove
                 vectors from the end. If not provided or `None`, just returns a pointer to the input tokens
-                `torch.nn.Embedding` module of the model without doing anything.
+                `mint.nn.Embedding` module of the model without doing anything.
             pad_to_multiple_of (`int`, *optional*):
                 If set will pad the embedding matrix to a multiple of the provided value. If `new_num_tokens` is set to
                 `None` will just pad the embedding to a multiple of `pad_to_multiple_of`.
 
         Return:
-            `mindspore.nn.Embedding`: Pointer to the resized Embedding Module or the old Embedding Module if
+            `mindspore.mint.nn.Embedding`: Pointer to the resized Embedding Module or the old Embedding Module if
             `new_num_tokens` is `None`
         """
 
@@ -770,15 +770,15 @@ class MSPreTrainedModel(nn.Cell, ModuleUtilsMixin, PushToHubMixin, PeftAdapterMi
         if old_num_tokens == new_num_tokens:
             return old_embeddings
 
-        if not isinstance(old_embeddings, nn.Embedding):
+        if not isinstance(old_embeddings, mint.nn.Embedding):
             raise TypeError(
-                f"Old embeddings are of type {type(old_embeddings)}, which is not an instance of {nn.Embedding}. You"
+                f"Old embeddings are of type {type(old_embeddings)}, which is not an instance of {mint.nn.Embedding}. You"
                 " should either use a different resize function or make sure that `old_embeddings` are an instance of"
-                f" {nn.Embedding}."
+                f" {mint.nn.Embedding}."
             )
 
         # Build new embeddings
-        new_embeddings = nn.Embedding(
+        new_embeddings = mint.nn.Embedding(
             new_num_tokens,
             old_embedding_dim,
         )
@@ -873,7 +873,7 @@ class MSPreTrainedModel(nn.Cell, ModuleUtilsMixin, PushToHubMixin, PeftAdapterMi
             f"overwrite this method in the class {self.__class__} in `modeling_{self.__class__.__module__}.py`"
         )
 
-    def get_position_embeddings(self) -> Union[nn.Embedding, Tuple[nn.Embedding]]:
+    def get_position_embeddings(self) -> Union[mint.nn.Embedding, Tuple[mint.nn.Embedding]]:
         raise NotImplementedError(
             f"`get_position_embeddings` is not implemented for {self.__class__}`. To implement it, you should "
             f"overwrite this method in the class {self.__class__} in `modeling_{self.__class__.__module__}.py`"

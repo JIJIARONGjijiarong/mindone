@@ -602,7 +602,7 @@ class GemmaPreTrainedModel(MSPreTrainedModel):
             module.weight.set_data(initializer(Normal(mean=0.0, sigma=std), module.weight.shape, module.weight.dtype))
             if module.bias is not None:
                 module.bias.set_data(initializer(Zero(), module.bias.shape, module.bias.dtype))
-        elif isinstance(module, nn.Embedding):
+        elif isinstance(module, mint.nn.Embedding):
             module.embedding_table.set_data(
                 initializer(Normal(mean=0.0, sigma=std), module.embedding_table.shape, module.embedding_table.dtype)
             )
@@ -626,7 +626,7 @@ class GemmaModel(GemmaPreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=self.padding_idx)
+        self.embed_tokens = mint.nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=self.padding_idx)
         self.layers = nn.CellList(
             [GemmaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )

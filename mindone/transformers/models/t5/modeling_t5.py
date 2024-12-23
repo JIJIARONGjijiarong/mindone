@@ -167,7 +167,7 @@ class T5Attention(nn.Cell):
         self.o = mint.nn.Linear(self.inner_dim, self.d_model, has_bias=False)
 
         if self.has_relative_attention_bias:
-            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
+            self.relative_attention_bias = mint.nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
         self.pruned_heads = set()
         self.gradient_checkpointing = False
 
@@ -847,7 +847,7 @@ class T5Model(T5PreTrainedModel):
 
     def __init__(self, config: T5Config):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = mint.nn.Embedding(config.vocab_size, config.d_model)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1004,7 +1004,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         super().__init__(config)
         self.model_dim = config.d_model
 
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = mint.nn.Embedding(config.vocab_size, config.d_model)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1178,7 +1178,7 @@ class T5EncoderModel(T5PreTrainedModel):
 
     def __init__(self, config: T5Config):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = mint.nn.Embedding(config.vocab_size, config.d_model)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.use_cache = False
