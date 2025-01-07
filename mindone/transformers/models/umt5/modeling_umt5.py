@@ -23,7 +23,7 @@ from transformers.models.umt5.configuration_umt5 import UMT5Config
 from transformers.utils import logging
 
 import mindspore as ms
-from mindspore import nn, ops
+from mindspore import nn, ops, mint
 
 from ...activations import ACT2FN
 from ...modeling_outputs import (
@@ -78,7 +78,7 @@ class UMT5LayerNorm(nn.Cell):
         # half-precision inputs is done in fp32
 
         variance = hidden_states.to(ms.float32).pow(2).mean(-1, keep_dims=True)
-        hidden_states = hidden_states * ops.rsqrt(variance + self.variance_epsilon)
+        hidden_states = hidden_states * mint.rsqrt(variance + self.variance_epsilon)
 
         # convert into half-precision if necessary
         if self.weight.dtype in [ms.float16, ms.bfloat16]:
@@ -91,9 +91,9 @@ class UMT5LayerNorm(nn.Cell):
 class UMT5DenseActDense(nn.Cell):
     def __init__(self, config: UMT5Config):
         super().__init__()
-        self.wi = nn.Dense(config.d_model, config.d_ff, has_bias=False)
-        self.wo = nn.Dense(config.d_ff, config.d_model, has_bias=False)
-        self.dropout = nn.Dropout(p=config.dropout_rate)
+        self.wi = mint.nn.Linear(config.d_model, config.d_ff, bias=False)
+        self.wo = mint.nn.Linear(config.d_ff, config.d_model, bias=False)
+        self.dropout = mint.nn.Dropout(p=config.dropout_rate)
         self.act = ACT2FN[config.dense_act_fn]
 
     def construct(self, hidden_states):
@@ -114,10 +114,10 @@ class UMT5DenseActDense(nn.Cell):
 class UMT5DenseGatedActDense(nn.Cell):
     def __init__(self, config: UMT5Config):
         super().__init__()
-        self.wi_0 = nn.Dense(config.d_model, config.d_ff, has_bias=False)
-        self.wi_1 = nn.Dense(config.d_model, config.d_ff, has_bias=False)
-        self.wo = nn.Dense(config.d_ff, config.d_model, has_bias=False)
-        self.dropout = nn.Dropout(p=config.dropout_rate)
+        self.wi_0 = mint.nn.Linear(config.d_model, config.d_ff, bias=False)
+        self.wi_1 = mint.nn.Linear(config.d_model, config.d_ff, bias=False)
+        self.wo = mint.nn.Linear(config.d_ff, config.d_model, bias=False)
+        self.dropout = mint.nn.Dropout(p=config.dropout_rate)
         self.act = ACT2FN[config.dense_act_fn]
 
     def construct(self, hidden_states):
@@ -150,7 +150,7 @@ class UMT5LayerFF(nn.Cell):
             self.DenseReluDense = UMT5DenseActDense(config)
 
         self.layer_norm = UMT5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.dropout = nn.Dropout(p=config.dropout_rate)
+        self.dropout = mint.nn.Dropout(p=config.dropout_rate)
 
     def construct(self, hidden_states):
         forwarded_states = self.layer_norm(hidden_states)
@@ -177,13 +177,13 @@ class UMT5Attention(nn.Cell):
         self.inner_dim = self.n_heads * self.key_value_proj_dim
 
         # Mesh TensorFlow initialization to avoid scaling before softmax
-        self.q = nn.Dense(self.d_model, self.inner_dim, has_bias=False)
-        self.k = nn.Dense(self.d_model, self.inner_dim, has_bias=False)
-        self.v = nn.Dense(self.d_model, self.inner_dim, has_bias=False)
-        self.o = nn.Dense(self.inner_dim, self.d_model, has_bias=False)
+        self.q = mint.nn.Linear(self.d_model, self.inner_dim, bias=False)
+        self.k = mint.nn.Linear(self.d_model, self.inner_dim, bias=False)
+        self.v = mint.nn.Linear(self.d_model, self.inner_dim, bias=False)
+        self.o = mint.nn.Linear(self.inner_dim, self.d_model, bias=False)
 
         if self.has_relative_attention_bias:
-            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
+            self.relative_attention_bias = mint.nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
         self.pruned_heads = set()
 
     def _shape(self, projection: ms.Tensor) -> ms.Tensor:
@@ -221,7 +221,7 @@ class UMT5Attention(nn.Cell):
             relative_buckets += (relative_position > 0).long() * num_buckets
             relative_position = ops.abs(relative_position)
         else:
-            relative_position = -ops.minimum(relative_position, ops.zeros_like(relative_position))
+            relative_position = -ops.minimum(relative_position, mint.zeros_like(relative_position))
         # now relative_position is in the range [0, inf)
 
         # half of the buckets are for exact increments in positions
@@ -229,20 +229,20 @@ class UMT5Attention(nn.Cell):
         is_small = relative_position < max_exact
 
         # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
-        log_ratio = ops.log(relative_position.float() / max_exact) / math.log(max_distance / max_exact)
+        log_ratio = mint.log(relative_position.float() / max_exact) / math.log(max_distance / max_exact)
         log_ratio = log_ratio * (num_buckets - max_exact)
         relative_position_if_large = max_exact + log_ratio.long()
         relative_position_if_large = ops.minimum(
             relative_position_if_large, ops.full_like(relative_position_if_large, num_buckets - 1)
         )
 
-        relative_buckets += ops.where(is_small, relative_position, relative_position_if_large)
+        relative_buckets += mint.where(is_small, relative_position, relative_position_if_large)
         return relative_buckets
 
     def compute_bias(self, query_length, key_length):
         """Compute binned relative position bias"""
-        context_position = ops.arange(query_length, dtype=ms.int64)[:, None]
-        memory_position = ops.arange(key_length, dtype=ms.int64)[None, :]
+        context_position = mint.arange(query_length, dtype=ms.int64)[:, None]
+        memory_position = mint.arange(key_length, dtype=ms.int64)[None, :]
         relative_position = memory_position - context_position  # shape (query_length, key_length)
         relative_position_bucket = self._relative_position_bucket(relative_position)
         values = self.relative_attention_bias(relative_position_bucket)  # shape (query_length, key_length, num_heads)
@@ -273,11 +273,11 @@ class UMT5Attention(nn.Cell):
             value_states = self._shape(self.v(current_states))
             if past_key_value is not None and not is_cross_attention:
                 # reuse k, v, self_attention
-                key_states = ops.cat([past_key_value[0], key_states], axis=2)
-                value_states = ops.cat([past_key_value[1], value_states], axis=2)
+                key_states = mint.cat([past_key_value[0], key_states], dim=2)
+                value_states = mint.cat([past_key_value[1], value_states], dim=2)
 
         query_states = self._shape(self.q(hidden_states))
-        attention_scores = ops.matmul(query_states, key_states.swapaxes(-1, -2))
+        attention_scores = mint.matmul(query_states, key_states.swapaxes(-1, -2))
 
         # compute positional bias
         if self.has_relative_attention_bias:
@@ -286,7 +286,7 @@ class UMT5Attention(nn.Cell):
                 query_length += past_key_value[0].shape[2]
             position_bias = self.compute_bias(query_length, key_states.shape[2])
         else:
-            position_bias = ops.zeros((1, self.n_heads, seq_length, key_states.shape[2]), dtype=attention_scores.dtype)
+            position_bias = mint.zeros((1, self.n_heads, seq_length, key_states.shape[2]), dtype=attention_scores.dtype)
             if self.training:
                 position_bias.requires_grad = True
         if past_key_value is not None:
@@ -306,15 +306,16 @@ class UMT5Attention(nn.Cell):
 
         attention_scores += position_bias
         # (batch_size, n_heads, seq_length, key_length)
-        attn_weights = ops.softmax(attention_scores.float(), axis=-1).type_as(attention_scores)
-        attn_weights = ops.dropout(attn_weights, p=self.dropout, training=self.training)
+        attn_weights = mint.nn.Softmax(dim=-1)(attention_scores.float()).type_as(attention_scores)
+        if self.training:
+            attn_weights = mint.nn.Dropout(p=self.dropout)(attn_weights)
 
         # Mask heads if we want to
         if layer_head_mask is not None:
             attn_weights = attn_weights * layer_head_mask
 
-        #  attn_output = ops.bmm(attn_probs, value_states) ?
-        context_states = ops.matmul(attn_weights, value_states)
+        #  attn_output = mint.bmm(attn_probs, value_states) ?
+        context_states = mint.matmul(attn_weights, value_states)
         # attn_output = attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim) ?
         context_states = context_states.permute(0, 2, 1, 3).view(batch_size, seq_length, -1)
         attn_output = self.o(context_states)
@@ -326,7 +327,7 @@ class UMT5LayerSelfAttention(nn.Cell):
         super().__init__()
         self.SelfAttention = UMT5Attention(config, has_relative_attention_bias=True)
         self.layer_norm = UMT5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.dropout = nn.Dropout(p=config.dropout_rate)
+        self.dropout = mint.nn.Dropout(p=config.dropout_rate)
 
     def construct(
         self,
@@ -352,7 +353,7 @@ class UMT5LayerCrossAttention(nn.Cell):
         super().__init__()
         self.EncDecAttention = UMT5Attention(config, has_relative_attention_bias=False)
         self.layer_norm = UMT5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.dropout = nn.Dropout(p=config.dropout_rate)
+        self.dropout = mint.nn.Dropout(p=config.dropout_rate)
 
     def construct(
         self,
@@ -412,8 +413,8 @@ class UMT5Block(nn.Cell):
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == ms.float16:
             max_dtype = dtype_to_max(hidden_states.dtype)
-            clamp_value = ops.where(ops.isinf(hidden_states).any(), max_dtype - 1000, max_dtype)
-            hidden_states = ops.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+            clamp_value = mint.where(ops.isinf(hidden_states).any(), max_dtype - 1000, max_dtype)
+            hidden_states = mint.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         # Cross-Attention Block
         cross_attn_present_key_value = None
@@ -432,8 +433,8 @@ class UMT5Block(nn.Cell):
             # clamp inf values to enable fp16 training
             if hidden_states.dtype == ms.float16:
                 max_dtype = dtype_to_max(hidden_states.dtype)
-                clamp_value = ops.where(ops.isinf(hidden_states).any(), max_dtype - 1000, max_dtype)
-                hidden_states = ops.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+                clamp_value = mint.where(ops.isinf(hidden_states).any(), max_dtype - 1000, max_dtype)
+                hidden_states = mint.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
             present_key_value += cross_attn_present_key_value
 
@@ -443,8 +444,8 @@ class UMT5Block(nn.Cell):
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == ms.float16:
             max_dtype = dtype_to_max(hidden_states.dtype)
-            clamp_value = ops.where(ops.isinf(hidden_states).any(), max_dtype - 1000, max_dtype)
-            hidden_states = ops.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+            clamp_value = mint.where(ops.isinf(hidden_states).any(), max_dtype - 1000, max_dtype)
+            hidden_states = mint.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (
             hidden_states,
@@ -463,14 +464,14 @@ class UMT5ClassificationHead(nn.Cell):
 
     def __init__(self, config: UMT5Config):
         super().__init__()
-        self.dense = nn.Dense(config.d_model, config.d_model)
-        self.dropout = nn.Dropout(p=config.classifier_dropout)
-        self.out_proj = nn.Dense(config.d_model, config.num_labels)
+        self.dense = mint.nn.Linear(config.d_model, config.d_model)
+        self.dropout = mint.nn.Dropout(p=config.classifier_dropout)
+        self.out_proj = mint.nn.Linear(config.d_model, config.num_labels)
 
     def construct(self, hidden_states: ms.Tensor) -> ms.Tensor:
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.dense(hidden_states)
-        hidden_states = ops.tanh(hidden_states)
+        hidden_states = mint.tanh(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.out_proj(hidden_states)
         return hidden_states
@@ -534,7 +535,7 @@ class UMT5Stack(UMT5PreTrainedModel):
         self.is_decoder = config.is_decoder
         self.block = nn.CellList([UMT5Block(config) for i in range(config.num_layers)])
         self.final_layer_norm = UMT5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.dropout = nn.Dropout(p=config.dropout_rate)
+        self.dropout = mint.nn.Dropout(p=config.dropout_rate)
 
         # Initialize weights and apply final processing
         self.gradient_checkpointing = False
@@ -597,10 +598,10 @@ class UMT5Stack(UMT5PreTrainedModel):
                 raise ValueError(f"`use_cache` can only be set to `True` if {self} is used as a decoder")
 
         if attention_mask is None:
-            attention_mask = ops.ones((batch_size, mask_seq_length))
+            attention_mask = mint.ones((batch_size, mask_seq_length))
         if self.is_decoder and encoder_attention_mask is None and encoder_hidden_states is not None:
             encoder_seq_length = encoder_hidden_states.shape[1]
-            encoder_attention_mask = ops.ones((batch_size, encoder_seq_length), dtype=ms.int64)
+            encoder_attention_mask = mint.ones((batch_size, encoder_seq_length), dtype=ms.int64)
 
         # initialize past_key_values with `None` if past does not exist
         if past_key_values is None:
@@ -616,7 +617,7 @@ class UMT5Stack(UMT5PreTrainedModel):
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.shape
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = ops.ones(encoder_hidden_shape)
+                encoder_attention_mask = mint.ones(encoder_hidden_shape)
             encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
@@ -890,7 +891,7 @@ class UMT5Model(UMT5PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = mint.nn.Embedding(config.vocab_size, config.d_model)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1062,7 +1063,7 @@ class UMT5EncoderModel(UMT5PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = mint.nn.Embedding(config.vocab_size, config.d_model)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.use_cache = False
@@ -1238,7 +1239,7 @@ class UMT5ForSequenceClassification(UMT5PreTrainedModel):
                     self.config.problem_type = "multi_label_classification"
 
             if self.config.problem_type == "regression":
-                loss_fct = nn.MSELoss()
+                loss_fct = mint.nn.MSELoss()
                 if self.config.num_labels == 1:
                     loss = loss_fct(logits.squeeze(), labels.squeeze())
                 else:
@@ -1276,8 +1277,8 @@ class UMT5ForTokenClassification(UMT5PreTrainedModel):
         self.num_labels = config.num_labels
 
         self.transformer = UMT5EncoderModel(config)
-        self.dropout = nn.Dropout(p=config.classifier_dropout)
-        self.classifier = nn.Dense(config.hidden_size, config.num_labels)
+        self.dropout = mint.nn.Dropout(p=config.classifier_dropout)
+        self.classifier = mint.nn.Linear(config.hidden_size, config.num_labels)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1339,7 +1340,7 @@ class UMT5ForQuestionAnswering(UMT5PreTrainedModel):
         super().__init__(config)
         self.model_dim = config.d_model
 
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = mint.nn.Embedding(config.vocab_size, config.d_model)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1354,7 +1355,7 @@ class UMT5ForQuestionAnswering(UMT5PreTrainedModel):
         self.decoder = UMT5Stack(decoder_config, self.shared)
 
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Dense(config.d_model, config.num_labels)
+        self.qa_outputs = mint.nn.Linear(config.d_model, config.num_labels)
 
         # Initialize weights and apply final processing
         self.post_init()
