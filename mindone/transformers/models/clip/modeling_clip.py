@@ -303,6 +303,8 @@ class CLIPAttention(nn.Cell):
 
         if self.training:
             attn_probs = mint.nn.Dropout(p=self.dropout)(attn_weights)
+        else:
+            attn_probs = attn_weights
 
         attn_output = ops.bmm(attn_probs, value_states)
 
@@ -341,9 +343,9 @@ class CLIPEncoderLayer(nn.Cell):
         super().__init__()
         self.embed_dim = config.hidden_size
         self.self_attn = CLIPAttention(config)
-        self.layer_norm1 = mint.nn.LayerNorm((self.embed_dim,), epsilon=config.layer_norm_eps)
+        self.layer_norm1 = mint.nn.LayerNorm((self.embed_dim,), eps=config.layer_norm_eps)
         self.mlp = CLIPMLP(config)
-        self.layer_norm2 = mint.nn.LayerNorm((self.embed_dim,), epsilon=config.layer_norm_eps)
+        self.layer_norm2 = mint.nn.LayerNorm((self.embed_dim,), eps=config.layer_norm_eps)
 
     def construct(
         self,
@@ -498,7 +500,7 @@ class CLIPTextTransformer(nn.Cell):
         embed_dim = config.hidden_size
         self.embeddings = CLIPTextEmbeddings(config)
         self.encoder = CLIPEncoder(config)
-        self.final_layer_norm = mint.nn.LayerNorm((embed_dim,), epsilon=config.layer_norm_eps)
+        self.final_layer_norm = mint.nn.LayerNorm((embed_dim,), eps=config.layer_norm_eps)
 
         # For `pooled_output` computation
         self.eos_token_id = config.eos_token_id
@@ -642,9 +644,9 @@ class CLIPVisionTransformer(nn.Cell):
         embed_dim = config.hidden_size
 
         self.embeddings = CLIPVisionEmbeddings(config)
-        self.pre_layrnorm = mint.nn.LayerNorm((embed_dim,), epsilon=config.layer_norm_eps)
+        self.pre_layrnorm = mint.nn.LayerNorm((embed_dim,), eps=config.layer_norm_eps)
         self.encoder = CLIPEncoder(config)
-        self.post_layernorm = mint.nn.LayerNorm((embed_dim,), epsilon=config.layer_norm_eps)
+        self.post_layernorm = mint.nn.LayerNorm((embed_dim,), eps=config.layer_norm_eps)
 
     def construct(
         self,
