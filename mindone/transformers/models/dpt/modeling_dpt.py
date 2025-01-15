@@ -155,7 +155,7 @@ class DPTViTHybridEmbeddings(nn.Cell):
         posemb_grid = ops.interpolate(posemb_grid, size=(grid_size_height, grid_size_width), mode="bilinear")
         posemb_grid = posemb_grid.permute(0, 2, 3, 1).reshape(1, grid_size_height * grid_size_width, -1)
 
-        posemb = mint.cat([posemb_tok, posemb_grid], axis=1)
+        posemb = mint.cat([posemb_tok, posemb_grid], dim=1)
 
         return posemb
 
@@ -188,7 +188,7 @@ class DPTViTHybridEmbeddings(nn.Cell):
         embeddings = self.projection(features).flatten(start_dim=2).swapaxes(1, 2)
 
         cls_tokens = self.cls_token.broadcast_to((batch_size, -1, -1))
-        embeddings = mint.cat((cls_tokens, embeddings), axis=1)
+        embeddings = mint.cat((cls_tokens, embeddings), dim=1)
 
         # add positional encoding to each token
         embeddings = embeddings + position_embeddings
@@ -230,7 +230,7 @@ class DPTViTEmbeddings(nn.Cell):
         posemb_grid = ops.interpolate(posemb_grid, size=(grid_size_height, grid_size_width), mode="bilinear")
         posemb_grid = posemb_grid.permute(0, 2, 3, 1).reshape(1, grid_size_height * grid_size_width, -1)
 
-        posemb = mint.cat([posemb_tok, posemb_grid], axis=1)
+        posemb = mint.cat([posemb_tok, posemb_grid], dim=1)
 
         return posemb
 
@@ -1089,7 +1089,7 @@ class DPTDepthEstimationHead(nn.Cell):
 
         predicted_depth = self.head(hidden_states)
 
-        predicted_depth = predicted_depth.squeeze(axis=1)
+        predicted_depth = predicted_depth.squeeze(dim=1)
 
         return predicted_depth
 

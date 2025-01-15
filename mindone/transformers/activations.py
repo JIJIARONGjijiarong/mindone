@@ -203,7 +203,8 @@ ACT2CLS = {
     "relu": mint.nn.ReLU,
     "relu2": ReLUSquaredActivation,
     "relu6": nn.ReLU6,
-    "sigmoid": mint.nn.sigmoid,
+    # TODO: sigmoid
+    "sigmoid": nn.Sigmoid,
     "silu": SiLUActivation,
     "swish": SiLUActivation,
     "tanh": mint.tanh,

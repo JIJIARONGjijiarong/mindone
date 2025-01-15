@@ -146,7 +146,7 @@ class Blip2VisionEmbeddings(nn.Cell):
         patch_embeds = self.patch_embedding(pixel_values.to(dtype=target_dtype))  # shape = [*, width, grid, grid]
         patch_embeds = mint.flatten(patch_embeds, start_dim=2).swapaxes(1, 2)
         class_embeds = self.class_embedding.broadcast_to((batch_size, 1, -1)).to(target_dtype)
-        embeddings = mint.cat([class_embeds, patch_embeds], axis=1)
+        embeddings = mint.cat([class_embeds, patch_embeds], dim=1)
         if interpolate_pos_encoding:
             position_embedding = self.interpolate_pos_encoding(embeddings, height, width)
         else:
@@ -801,7 +801,7 @@ class Blip2QFormerLayer(nn.Cell):
 
             if attention_output.shape[1] > query_length:
                 layer_output_text = self.feed_forward_chunk(attention_output[:, query_length:, :])
-                layer_output = mint.cat([layer_output, layer_output_text], axis=1)
+                layer_output = mint.cat([layer_output, layer_output_text], dim=1)
         else:
             layer_output = self.feed_forward_chunk(attention_output)
         outputs = (layer_output,) + outputs
@@ -1391,11 +1391,11 @@ class Blip2Model(Blip2PreTrainedModel):
         language_model_inputs = self.language_projection(query_output)
         language_model_attention_mask = mint.ones(language_model_inputs.shape[:-1], dtype=ms.int64)
         inputs_embeds = self.language_model.get_input_embeddings()(input_ids)
-        inputs_embeds = mint.cat([language_model_inputs, inputs_embeds], axis=1)
+        inputs_embeds = mint.cat([language_model_inputs, inputs_embeds], dim=1)
 
         if attention_mask is None:
             attention_mask = mint.ones_like(input_ids)
-        attention_mask = mint.cat([language_model_attention_mask, attention_mask], axis=1)
+        attention_mask = mint.cat([language_model_attention_mask, attention_mask], dim=1)
 
         if self.use_decoder_only_language_model:
             outputs = self.language_model(
@@ -1596,11 +1596,11 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel):
             dtype=ms.int64,
         )
         inputs_embeds = self.language_model.get_input_embeddings()(input_ids)
-        inputs_embeds = mint.cat([language_model_inputs, inputs_embeds], axis=1)
+        inputs_embeds = mint.cat([language_model_inputs, inputs_embeds], dim=1)
 
         if attention_mask is None:
             attention_mask = mint.ones_like(input_ids)
-        attention_mask = mint.cat([language_model_attention_mask, attention_mask], axis=1)
+        attention_mask = mint.cat([language_model_attention_mask, attention_mask], dim=1)
 
         if self.use_decoder_only_language_model:
             outputs = self.language_model(
@@ -1695,11 +1695,11 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel):
             input_ids = ms.Tensor([[self.config.text_config.bos_token_id]]).tile((batch_size, 1))
         if attention_mask is None:
             attention_mask = mint.ones_like(input_ids)
-        attention_mask = mint.cat([language_attention_mask, attention_mask], axis=1)
+        attention_mask = mint.cat([language_attention_mask, attention_mask], dim=1)
 
         # concatenate query embeddings with prompt embeddings
         inputs_embeds = self.get_input_embeddings()(input_ids)
-        inputs_embeds = ops.cat([language_model_inputs, inputs_embeds], axis=1)
+        inputs_embeds = ops.cat([language_model_inputs, inputs_embeds], dim=1)
 
         # add image_embeds length to max_length, so that the final max_length in counted only on token embeds
         # -1 is to account for the prepended BOS after `generate.`
@@ -1719,9 +1719,9 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel):
         if not self.language_model.config.is_encoder_decoder:
             bos_tokens = ms.Tensor([[self.config.text_config.bos_token_id]]).tile((batch_size, 1))
             if not isinstance(outputs, ms.Tensor):
-                outputs.sequences = mint.cat([bos_tokens, outputs.sequences], axis=-1)
+                outputs.sequences = mint.cat([bos_tokens, outputs.sequences], dim=-1)
             else:
-                outputs = mint.cat([bos_tokens, outputs], axis=-1)
+                outputs = mint.cat([bos_tokens, outputs], dim=-1)
         return outputs
 
 
