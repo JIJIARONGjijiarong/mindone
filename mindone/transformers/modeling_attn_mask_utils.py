@@ -216,7 +216,7 @@ def _make_causal_mask(
     Make causal mask used for bi-directional self-attention.
     """
     bsz, tgt_len = input_ids_shape
-    mask = mint.full((tgt_len, tgt_len), dtype_to_min(dtype), dtype=dtype)
+    mask = ops.full((tgt_len, tgt_len), dtype_to_min(dtype), dtype=dtype)
     mask_cond = mint.arange(mask.shape[-1])
     mask = mask.masked_fill(mask_cond < (mask_cond + 1).view(mask.shape[-1], 1), ms.tensor(0).to(dtype))
 

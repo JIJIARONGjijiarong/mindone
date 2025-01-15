@@ -1089,7 +1089,7 @@ class DPTDepthEstimationHead(nn.Cell):
 
         predicted_depth = self.head(hidden_states)
 
-        predicted_depth = predicted_depth.squeeze(dim=1)
+        predicted_depth = predicted_depth.squeeze(axis=1)
 
         return predicted_depth
 
