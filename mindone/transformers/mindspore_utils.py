@@ -46,7 +46,7 @@ def prune_linear_layer(layer: mint.nn.Linear, index: ms.Tensor, dim: int = 0) ->
             b = layer.bias[index].clone()
     new_size = list(layer.weight.shape)
     new_size[dim] = len(index)
-    new_layer = mint.nn.Linear(new_size[1], new_size[0], has_bias=layer.bias is not None)
+    new_layer = mint.nn.Linear(new_size[1], new_size[0], bias=layer.bias is not None)
     new_layer.weight.requires_grad = False
     ops.assign(new_layer.weight, w)
     new_layer.weight.requires_grad = True

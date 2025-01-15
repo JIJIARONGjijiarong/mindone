@@ -310,9 +310,9 @@ class DPTViTSelfAttention(nn.Cell):
         self.attention_head_size_tensor = ms.Tensor(self.attention_head_size, ms.float32)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        self.query = mint.nn.Linear(config.hidden_size, self.all_head_size, has_bias=config.qkv_bias)
-        self.key = mint.nn.Linear(config.hidden_size, self.all_head_size, has_bias=config.qkv_bias)
-        self.value = mint.nn.Linear(config.hidden_size, self.all_head_size, has_bias=config.qkv_bias)
+        self.query = mint.nn.Linear(config.hidden_size, self.all_head_size, bias=config.qkv_bias)
+        self.key = mint.nn.Linear(config.hidden_size, self.all_head_size, bias=config.qkv_bias)
+        self.value = mint.nn.Linear(config.hidden_size, self.all_head_size, bias=config.qkv_bias)
 
         self.dropout = mint.nn.Dropout(p=config.attention_probs_dropout_prob)
 
@@ -404,7 +404,7 @@ def find_pruneable_heads_and_indices(
 
 
 # TODO: fix
-def prune_linear_layer(layer: mint.nn.Linear, index: ms.Tensor, dim: int = 0) -> nn.Dense:
+def prune_linear_layer(layer: mint.nn.Linear, index: ms.Tensor, dim: int = 0) -> mint.nn.Linear:
     """
     Prune a linear layer to keep only entries in index.
 
@@ -790,26 +790,24 @@ class DPTPreActResidualLayer(nn.Cell):
             else not self.use_batch_norm
         )
 
-        self.activation1 = nn.ReLU()
-        self.convolution1 = nn.Conv2d(
+        self.activation1 = mint.nn.ReLU()
+        self.convolution1 = mint.nn.Conv2d(
             config.fusion_hidden_size,
             config.fusion_hidden_size,
             kernel_size=3,
             stride=1,
             padding=1,
-            has_bias=use_bias_in_fusion_residual,
-            pad_mode="pad",
+            bias=use_bias_in_fusion_residual
         )
 
-        self.activation2 = nn.ReLU()
-        self.convolution2 = nn.Conv2d(
+        self.activation2 = mint.nn.ReLU()
+        self.convolution2 = mint.nn.Conv2d(
             config.fusion_hidden_size,
             config.fusion_hidden_size,
             kernel_size=3,
             stride=1,
             padding=1,
-            has_bias=use_bias_in_fusion_residual,
-            pad_mode="pad",
+            bias=use_bias_in_fusion_residual
         )
 
         if self.use_batch_norm:

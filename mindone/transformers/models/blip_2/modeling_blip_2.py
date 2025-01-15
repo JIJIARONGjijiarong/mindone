@@ -176,7 +176,7 @@ class Blip2Attention(nn.Cell):
         self.qkv = (
             mint.nn.Linear(self.embed_dim, 3 * self.embed_dim)
             if config.qkv_bias
-            else mint.nn.Linear(self.embed_dim, 3 * self.embed_dim, has_bias=False)
+            else mint.nn.Linear(self.embed_dim, 3 * self.embed_dim, bias=False)
         )
 
         if config.qkv_bias:
@@ -321,7 +321,7 @@ class Blip2PreTrainedModel(MSPreTrainedModel):
     def _init_weights(self, module):
         """Initialize the weights"""
         factor = self.config.initializer_range
-        if isinstance(module, mint.nn.Conv2d) or isinstance(module, nn.Dense):
+        if isinstance(module, mint.nn.Conv2d) or isinstance(module, mint.nn.Linear):
             module.weight.set_data(
                 initializer(Normal(mean=0.0, sigma=factor), shape=module.weight.shape, dtype=module.weight.dtype)
             )
@@ -530,8 +530,8 @@ class Blip2QFormerMultiHeadAttention(nn.Cell):
             self.key = mint.nn.Linear(config.encoder_hidden_size, self.all_head_size)
             self.value = mint.nn.Linear(config.encoder_hidden_size, self.all_head_size)
         else:
-            self.key = nn.Dense(config.hidden_size, self.all_head_size)
-            self.value = nn.Dense(config.hidden_size, self.all_head_size)
+            self.key = mint.nn.Linear(config.hidden_size, self.all_head_size)
+            self.value = mint.nn.Linear(config.hidden_size, self.all_head_size)
 
         self.dropout = mint.nn.Dropout(p=config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")

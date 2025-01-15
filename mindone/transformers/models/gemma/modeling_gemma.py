@@ -149,9 +149,9 @@ class GemmaMLP(nn.Cell):
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.gate_proj = mint.nn.Linear(self.hidden_size, self.intermediate_size, has_bias=False)
-        self.up_proj = mint.nn.Linear(self.hidden_size, self.intermediate_size, has_bias=False)
-        self.down_proj = mint.nn.Linear(self.intermediate_size, self.hidden_size, has_bias=False)
+        self.gate_proj = mint.nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = mint.nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = mint.nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         if config.hidden_activation is None:
             logger.warning_once(
                 "`config.hidden_act` is ignored, you should use `config.hidden_activation` instead.\n"
@@ -272,14 +272,14 @@ class GemmaAttention(nn.Cell):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = mint.nn.Linear(self.hidden_size, self.num_heads * self.head_dim, has_bias=config.attention_bias)
+        self.q_proj = mint.nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
         self.k_proj = mint.nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, has_bias=config.attention_bias
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
         self.v_proj = mint.nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, has_bias=config.attention_bias
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
-        self.o_proj = mint.nn.Linear(self.num_heads * self.head_dim, self.hidden_size, has_bias=config.attention_bias)
+        self.o_proj = mint.nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
         self.rotary_emb = GemmaRotaryEmbedding(
             self.head_dim,
             max_position_embeddings=self.max_position_embeddings,
@@ -832,7 +832,7 @@ class GemmaForCausalLM(GemmaPreTrainedModel):
         super().__init__(config)
         self.model = GemmaModel(config)
         self.vocab_size = config.vocab_size
-        self.lm_head = mint.nn.Linear(config.hidden_size, config.vocab_size, has_bias=False)
+        self.lm_head = mint.nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()

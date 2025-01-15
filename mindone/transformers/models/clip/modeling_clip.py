@@ -1052,7 +1052,7 @@ class CLIPVisionModelWithProjection(CLIPPreTrainedModel):
 
         self.vision_model = CLIPVisionTransformer(config)
 
-        self.visual_projection = mint.nn.Linear(config.hidden_size, config.projection_dim, has_bias=False)
+        self.visual_projection = mint.nn.Linear(config.hidden_size, config.projection_dim, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
