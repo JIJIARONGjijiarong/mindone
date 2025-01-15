@@ -336,7 +336,7 @@ class DPTViTSelfAttention(nn.Cell):
         attention_scores = attention_scores / mint.sqrt(self.attention_head_size_tensor.to(attention_scores.dtype))
 
         # Normalize the attention scores to probabilities.
-        attention_probs = mint.nn.softmax(dim=-1)(attention_scores)
+        attention_probs = mint.nn.Softmax(dim=-1)(attention_scores)
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.

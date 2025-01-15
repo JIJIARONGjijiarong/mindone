@@ -319,7 +319,7 @@ class GemmaAttention(nn.Cell):
             attn_weights = attn_weights + causal_mask
 
         # upcast attention to fp32
-        attn_weights = mint.nn.softmax(attn_weights, axis=-1, dtype=ms.float32).to(query_states.dtype)
+        attn_weights = mint.nn.Softmax(dim=-1)(attn_weights, dtype=ms.float32).to(query_states.dtype)
         # TODO: Dropout need review
         if self.training:
             attn_weights = mint.nn.Dropout(p=self.attention_dropout)(attn_weights)
