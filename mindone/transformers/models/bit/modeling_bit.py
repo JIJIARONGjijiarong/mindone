@@ -193,7 +193,7 @@ class DynamicPad2d(nn.Cell):
 
         # apply pad
         if padding_height > 0 or padding_width > 0:
-            input = mint.nn.functional.Pad(
+            input = ops.Pad(
                 (
                     (0, 0),
                     (0, 0),
