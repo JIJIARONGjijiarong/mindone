@@ -541,7 +541,7 @@ class XLMRobertaPooler(nn.Cell):
     def __init__(self, config):
         super().__init__()
         self.dense = mint.nn.Linear(config.hidden_size, config.hidden_size)
-        self.activation = mint.Tanh()
+        self.activation = mint.tanh
 
     def construct(self, hidden_states: ms.Tensor) -> ms.Tensor:
         # We "pool" the model by simply taking the hidden state corresponding

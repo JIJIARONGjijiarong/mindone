@@ -926,7 +926,7 @@ class BertModel(BertPreTrainedModel):
         )
 
         if attention_mask is None:
-            attention_mask = mint.ones((batch_size, seq_length + past_key_values_length))
+            attention_mask = ops.ones((batch_size, seq_length + past_key_values_length))
 
         use_sdpa_attention_masks = (
             self.attn_implementation == "sdpa"
