@@ -256,7 +256,7 @@ class BertSelfAttention(nn.Cell):
 
         context_layer = mint.matmul(attention_probs, value_layer)
 
-        context_layer = mint.permute(context_layer(0, 2, 1, 3))
+        context_layer = mint.permute(context_layer, (0, 2, 1, 3))
         new_context_layer_shape = context_layer.shape[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(new_context_layer_shape)
 
