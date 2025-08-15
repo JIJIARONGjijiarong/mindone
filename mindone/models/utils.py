@@ -5,6 +5,7 @@ from mindspore.common.initializer import (
     Constant,
     Normal,
     One,
+    Uniform,
     TruncatedNormal,
     XavierNormal,
     XavierUniform,
@@ -44,6 +45,10 @@ def ones_(tensor: Parameter) -> None:
 
 def zeros_(tensor: Parameter) -> None:
     tensor.set_data(initializer(Zero(), tensor.shape, tensor.dtype))
+
+
+def uniform_(tensor: Parameter, gain: float=1.0) -> None:
+    tensor.set_data(initializer(Uniform(gain), tensor.shape, tensor.dtype))
 
 
 def xavier_uniform_(tensor: Parameter, gain: float = 1.0) -> None:

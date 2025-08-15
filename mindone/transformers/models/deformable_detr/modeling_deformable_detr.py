@@ -19,6 +19,7 @@ import math
 import warnings
 from typing import Optional, Union
 
+import numpy as np
 import mindspore
 from mindspore import Tensor, nn
 
@@ -31,6 +32,7 @@ from ...utils import (
     logging,
     requires_backends,
 )
+from mindone.models.utils import constant_, normal_, uniform_, xavier_uniform_
 from transformers.utils.backbone_utils import load_backbone
 from .configuration_deformable_detr import DeformableDetrConfig
 from timm import create_model
@@ -144,7 +146,7 @@ class DeformableDetrModelOutput(nn.Cell):
     enc_outputs_coord_logits: Optional[mindspore.Tensor] = None
 
 
-class DeformableDetrObjectDetectionOutput(ModelOutput):
+class DeformableDetrObjectDetectionOutput(mindspore.nn.Cell):
     r"""
     loss (`mindspore.Tensor` of shape `(1,)`, *optional*, returned when `labels` are provided)):
         Total loss as a linear combination of a negative log-likehood (cross-entropy) for class prediction and a
@@ -284,7 +286,7 @@ class DeformableDetrConvEncoder(mindspore.nn.Cell):
         if config.use_timm_backbone:
             # We default to values which were previously hard-coded. This enables configurability from the config
             # using backbone arguments, while keeping the default behavior the same.
-            requires_backends(self, ["timm"])
+            requires_backends(self, ["timm"]) # TODO: need check
             kwargs = getattr(config, "backbone_kwargs", {})
             kwargs = {} if kwargs is None else kwargs.copy()
             out_indices = kwargs.pop("out_indices", (2, 3, 4) if config.num_feature_levels > 1 else (4,))
@@ -303,8 +305,7 @@ class DeformableDetrConvEncoder(mindspore.nn.Cell):
             backbone = load_backbone(config)
 
         # replace batch norm by frozen batch norm
-        with mindspore._no_grad():
-            replace_batch_norm(backbone)
+        replace_batch_norm(backbone)
         self.model = backbone
         self.intermediate_channel_sizes = (
             self.model.feature_info.channels() if config.use_timm_backbone else self.model.channels
@@ -747,7 +748,7 @@ class DeformableDetrEncoderLayer(nn.Cell):
 
         if self.training:
             if mindspore.mint.isinf(hidden_states).any() or mindspore.mint.isnan(hidden_states).any():
-                clamp_value = torch.finfo(hidden_states.dtype).max - 1000
+                clamp_value = mindspore.tensor(np.finfo(np.float32).max, dtype=hidden_states.dtype) - 1000
                 hidden_states = mindspore.mint.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (hidden_states,)
@@ -886,11 +887,11 @@ class DeformableDetrPreTrainedModel(PreTrainedModel):
         std = self.config.init_std
 
         if isinstance(module, DeformableDetrLearnedPositionEmbedding):
-            nn.init.uniform_(module.row_embeddings.weight)
-            nn.init.uniform_(module.column_embeddings.weight)
+            uniform_(module.row_embeddings.weight)
+            uniform_(module.column_embeddings.weight)
         elif isinstance(module, DeformableDetrMultiscaleDeformableAttention):
-            nn.init.constant_(module.sampling_offsets.weight.data, 0.0)
-            default_dtype = torch.get_default_dtype()
+            constant_(module.sampling_offsets.weight.data, 0.0)
+            default_dtype = module.attention_weights.weight.dtype
             thetas = mindspore.mint.arange(module.n_heads, dtype=mindspore.int64).to(default_dtype) * (
                 2.0 * math.pi / module.n_heads
             )
@@ -902,14 +903,14 @@ class DeformableDetrPreTrainedModel(PreTrainedModel):
             )
             for i in range(module.n_points):
                 grid_init[:, :, i, :] *= i + 1
-            with mindspore._no_grad():
-                module.sampling_offsets.bias = mindspore.Parameter(grid_init.view(-1))
-            nn.init.constant_(module.attention_weights.weight.data, 0.0)
-            nn.init.constant_(module.attention_weights.bias.data, 0.0)
-            nn.init.xavier_uniform_(module.value_proj.weight.data)
-            nn.init.constant_(module.value_proj.bias.data, 0.0)
-            nn.init.xavier_uniform_(module.output_proj.weight.data)
-            nn.init.constant_(module.output_proj.bias.data, 0.0)
+
+            module.sampling_offsets.bias = mindspore.Parameter(grid_init.view(-1))
+            constant_(module.attention_weights.weight.data, 0.0)
+            constant_(module.attention_weights.bias.data, 0.0)
+            xavier_uniform_(module.value_proj.weight.data)
+            constant_(module.value_proj.bias.data, 0.0)
+            xavier_uniform_(module.output_proj.weight.data)
+            constant_(module.output_proj.bias.data, 0.0)
         elif isinstance(module, (mindspore.mint.nn.Linear, mindspore.mint.nn.Conv2d, mindspore.mint.nn.BatchNorm2d)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
@@ -921,10 +922,10 @@ class DeformableDetrPreTrainedModel(PreTrainedModel):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         if hasattr(module, "reference_points") and not self.config.two_stage:
-            nn.init.xavier_uniform_(module.reference_points.weight.data, gain=1.0)
-            nn.init.constant_(module.reference_points.bias.data, 0.0)
+            xavier_uniform_(module.reference_points.weight.data, gain=1.0)
+            constant_(module.reference_points.bias.data, 0.0)
         if hasattr(module, "level_embed"):
-            nn.init.normal_(module.level_embed)
+            normal_(module.level_embed)
 
 
 class DeformableDetrEncoder(DeformableDetrPreTrainedModel):
@@ -1294,7 +1295,7 @@ class DeformableDetrModel(DeformableDetrPreTrainedModel):
         self.encoder = DeformableDetrEncoder(config)
         self.decoder = DeformableDetrDecoder(config)
 
-        self.level_embed = mindspore.Parameter(mindspore.Tensor(config.num_feature_levels, config.d_model))
+        self.level_embed = mindspore.Parameter(mindspore.mint.zeros([config.num_feature_levels, config.d_model]))
 
         if config.two_stage:
             self.enc_output = mindspore.mint.nn.Linear(config.d_model, config.d_model)
@@ -1632,7 +1633,7 @@ class DeformableDetrMLPPredictionHead(mindspore.nn.Cell):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = mindspore.nn.CellList(mindspore.mint.nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.layers = mindspore.nn.CellList([mindspore.mint.nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])])
 
     def construct(self, x):
         for i, layer in enumerate(self.layers):
@@ -1723,7 +1724,7 @@ class DeformableDetrForObjectDetection(DeformableDetrPreTrainedModel):
         >>> outputs = model(**inputs)
 
         >>> # convert outputs (bounding boxes and class logits) to Pascal VOC format (xmin, ymin, xmax, ymax)
-        >>> target_sizes = torch.tensor([image.size[::-1]])
+        >>> target_sizes = mindspore.tensor([image.size[::-1]])
         >>> results = image_processor.post_process_object_detection(outputs, threshold=0.5, target_sizes=target_sizes)[
         ...     0
         ... ]

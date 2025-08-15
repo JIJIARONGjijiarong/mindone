@@ -216,6 +216,7 @@ ACT2CLS = {
     "silu": SiLUActivationFP32,
     "swish": SiLUActivationFP32,
     "tanh": nn.Tanh,
+    "prelu": nn.PReLU,
 }
 ACT2FN = ClassInstantier(ACT2CLS)
 

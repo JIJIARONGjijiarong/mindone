@@ -19,9 +19,10 @@ from typing import Optional, Union
 
 import mindspore
 from mindspore import Tensor, nn
+from mindspore.common.initializer import XavierUniform, initializer
 
 from ...activations import ACT2FN
-from ...modeling_attn_mask_utils import _prepare_4d_attention_mask
+from ...modeling_attn_mask_utils import _prepare_4d_attention_mask, dtype_to_min
 from ...modeling_outputs import BaseModelOutput, BaseModelOutputWithCrossAttentions, Seq2SeqModelOutput
 from ...modeling_utils import PreTrainedModel
 from ...utils import logging
@@ -179,8 +180,7 @@ class DabDetrConvEncoder(mindspore.nn.Cell):
         backbone = load_backbone(config)
 
         # replace batch norm by frozen batch norm
-        with mindspore._no_grad():
-            replace_batch_norm(backbone)
+        replace_batch_norm(backbone)
         self.model = backbone
         self.intermediate_channel_sizes = self.model.channels
 
@@ -762,7 +762,7 @@ class DabDetrMLP(mindspore.nn.Cell):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = mindspore.nn.CellList(mindspore.mint.nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.layers = mindspore.nn.CellList([mindspore.mint.nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])])
 
     def construct(self, input_tensor):
         for i, layer in enumerate(self.layers):
@@ -782,10 +782,12 @@ class DabDetrPreTrainedModel(PreTrainedModel):
         xavier_std = self.config.init_xavier_std
 
         if isinstance(module, DabDetrMHAttentionMap):
-            nn.init.zeros_(module.k_linear.bias)
-            nn.init.zeros_(module.q_linear.bias)
-            nn.init.xavier_uniform_(module.k_linear.weight, gain=xavier_std)
-            nn.init.xavier_uniform_(module.q_linear.weight, gain=xavier_std)
+            module.k_linear.bias.zero_()
+            module.q_linear.bias.zero_()
+            module.k_linear.weight.set_data(initializer(XavierUniform(xavier_std), module.k_linear.weight.shape,
+                                                        module.k_linear.weight.dtype))
+            module.q_linear.weight.set_data(initializer(XavierUniform(xavier_std), module.q_linear.weight.shape,
+                                                        module.q_linear.weight.dtype))
         if isinstance(module, (mindspore.mint.nn.Linear, mindspore.mint.nn.Conv2d, mindspore.mint.nn.BatchNorm2d)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
@@ -797,8 +799,8 @@ class DabDetrPreTrainedModel(PreTrainedModel):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, DabDetrForObjectDetection):
-            nn.init.constant_(module.bbox_predictor.layers[-1].weight.data, 0)
-            nn.init.constant_(module.bbox_predictor.layers[-1].bias.data, 0)
+            module.bbox_predictor.layers[-1].weight.data.zero_()
+            module.bbox_predictor.layers[-1].bias.data.zero_()
 
             # init prior_prob setting for focal loss
             prior_prob = self.config.initializer_bias_prior_prob or 1 / (self.config.num_labels + 1)
@@ -1370,7 +1372,7 @@ class DabDetrMHAttentionMap(mindspore.nn.Cell):
         weights = mindspore.mint.einsum("bqnc,bnchw->bqnhw", queries_per_head * self.normalize_fact, keys_per_head)
 
         if mask is not None:
-            weights = weights.masked_fill(mask.unsqueeze(1).unsqueeze(1), torch.finfo(weights.dtype).min)
+            weights = weights.masked_fill(mask.unsqueeze(1).unsqueeze(1), dtype_to_min(weights.dtype))
         weights = mindspore.mint.nn.functional.softmax(weights.flatten(2), dim=-1).view(weights.shape)
         weights = self.dropout(weights)
         return weights

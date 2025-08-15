@@ -5,7 +5,7 @@
 #                          modular_deformable_detr.py file directly. One of our CI enforces this.
 #                🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨
 import pathlib
-from typing import Any, Optional, Union
+from typing import List, Tuple, Any, Optional, Union
 
 from ...image_processing_utils import BatchFeature, get_size_dict
 from ...image_processing_utils_fast import (
@@ -31,23 +31,48 @@ from ...image_utils import (
 from ...processing_utils import Unpack
 from ...utils import (
     TensorType,
-    is_torchvision_available,
-    is_torchvision_v2_available,
     logging,
 )
 from .image_processing_deformable_detr import get_size_with_aspect_ratio
 
+import cv2
+import numpy as np
 import mindspore
-
-if is_torchvision_v2_available():
-    from mindsporevision.io import read_image
-    from mindsporevision.transforms.v2 import functional as F
-elif is_torchvision_available():
-    from mindsporevision.io import read_image
-    from mindsporevision.transforms import functional as F
+import mindspore.mint.nn.functional as F
 
 
 logger = logging.get_logger(__name__)
+
+def resize_image(image: np.ndarray, resolution: int) -> np.ndarray:
+    h, w = image.shape[:2]
+    k = resolution / min(h, w)
+    h = int(np.round(h * k / 64.0)) * 64
+    w = int(np.round(w * k / 64.0)) * 64
+    return cv2.resize(image, (w, h), interpolation=cv2.INTER_LANCZOS4 if k > 1 else cv2.INTER_LINEAR)
+
+
+def image2tensor(image: np.ndarray) -> mindspore.Tensor:
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if image.ndim == 3 else np.expand_dims(image, 2)
+    image = np.expand_dims(image.transpose((2, 0, 1)) / 255.0, axis=0).astype(np.float32)
+    return mindspore.Tensor(image)
+
+
+# TODO: need check
+def read_images(cond_paths: List[str], size: int, flags=[-1]) -> Tuple[List[mindspore.Tensor], Tuple[int, int]]:
+    conds = []
+    image_shape = None
+    assert len(cond_paths) == len(flags)
+    for i, path in enumerate(cond_paths):
+        cond = cv2.imread(path, flags[i])
+        cond = resize_image(cond, size)
+
+        if image_shape is None:
+            image_shape = cond.shape[:2]
+        # FIXME: padding?
+        assert image_shape == cond.shape[:2], "All condition images must be resized to the same size."
+
+        conds.append(image2tensor(cond))
+    return conds, image_shape
 
 
 class DeformableDetrFastImageProcessorKwargs(DefaultFastImageProcessorKwargs):
@@ -249,7 +274,7 @@ def prepare_coco_panoptic_annotation(
     new_target["orig_size"] = mindspore.tensor([image_height, image_width], dtype=mindspore.int64, )
 
     if "segments_info" in target:
-        masks = read_image(annotation_path).permute(1, 2, 0).to(dtype=mindspore.int32, )
+        masks = read_images(annotation_path).permute(1, 2, 0).to(dtype=mindspore.int32, )
         masks = rgb_to_id(masks)
 
         ids = mindspore.tensor([segment_info["id"] for segment_info in target["segments_info"]], )
