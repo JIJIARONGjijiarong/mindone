@@ -505,6 +505,14 @@ from .models.gpt_bigcode import (
     GPTBigCodeModel,
     GPTBigCodePreTrainedModel,
 )
+from .models.gpt_neo import (
+    GPTNeoForCausalLM,
+    GPTNeoForQuestionAnswering,
+    GPTNeoForSequenceClassification,
+    GPTNeoForTokenClassification,
+    GPTNeoModel,
+    GPTNeoPreTrainedModel,
+)
 from .models.gpt_neox import (
     GPTNeoXForCausalLM,
     GPTNeoXForQuestionAnswering,
@@ -526,14 +534,6 @@ from .models.gptj import (
     GPTJForSequenceClassification,
     GPTJModel,
     GPTJPreTrainedModel,
-)
-from .models.gpt_neo import (
-    GPTNeoForCausalLM,
-    GPTNeoForQuestionAnswering,
-    GPTNeoForSequenceClassification,
-    GPTNeoForTokenClassification,
-    GPTNeoModel,
-    GPTNeoPreTrainedModel,
 )
 from .models.granite import GraniteForCausalLM, GraniteModel, GranitePreTrainedModel
 from .models.granitemoe import GraniteMoeForCausalLM, GraniteMoeModel, GraniteMoePreTrainedModel
@@ -753,6 +753,7 @@ from .models.mobilenet_v2 import (
     MobileNetV2ImageProcessorFast,
     MobileNetV2Model,
     MobileNetV2PreTrainedModel,
+)
 from .models.modernbert import (
     ModernBertForMaskedLM,
     ModernBertForSequenceClassification,
@@ -1058,8 +1059,8 @@ from .models.unispeech_sat import (
     UniSpeechSatPreTrainedModel,
 )
 from .models.univnet import UnivNetModel
-from .models.video_llava import VideoLlavaForConditionalGeneration, VideoLlavaPreTrainedModel
 from .models.upernet import UperNetForSemanticSegmentation, UperNetPreTrainedModel
+from .models.video_llava import VideoLlavaForConditionalGeneration, VideoLlavaPreTrainedModel
 from .models.vilt import (
     ViltForImageAndTextRetrieval,
     ViltForImagesAndTextClassification,
