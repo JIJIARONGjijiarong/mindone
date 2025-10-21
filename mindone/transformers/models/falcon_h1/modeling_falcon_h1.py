@@ -24,11 +24,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import mindspore
-from mindspore import mint
 from typing import Any, Callable, Optional, Union
 
+from transformers import FalconH1Config
 from transformers.activations import ACT2FN
+from transformers.utils import logging
+
+import mindspore
+from mindspore import mint
+from mindspore.common.initializer import Normal, initializer
 
 from ...cache_utils import Cache, DynamicCache
 from ...generation import GenerationMixin
@@ -39,21 +43,10 @@ from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
-from ...utils import TransformersKwargs, can_return_tuple, is_torchdynamo_compiling, logging
-from ...utils.import_utils import is_causal_conv1d_available, is_mamba_2_ssm_available
-from transformers import FalconH1Config
+from ...utils import TransformersKwargs
 
-
-if is_mamba_2_ssm_available():
-    from mamba_ssm.ops.triton.selective_state_update import selective_state_update
-    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined, mamba_split_conv1d_scan_combined
-else:
-    selective_state_update = None
-
-if is_causal_conv1d_available():
-    from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
-else:
-    causal_conv1d_update, causal_conv1d_fn = None, None
+selective_state_update = None
+causal_conv1d_update, causal_conv1d_fn = None, None
 
 
 logger = logging.get_logger(__name__)
@@ -131,9 +124,9 @@ class FalconHybridMambaAttentionDynamicCache(Cache):
         Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
 
         Parameters:
-            key_states (`torch.Tensor`):
+            key_states (`mindspore.Tensor`):
                 The new key states to cache.
-            value_states (`torch.Tensor`):
+            value_states (`mindspore.Tensor`):
                 The new value states to cache.
             layer_idx (`int`):
                 The index of the layer to cache the states for.
@@ -163,15 +156,10 @@ class FalconHybridMambaAttentionDynamicCache(Cache):
     def reorder_cache(self, beam_idx: mindspore.Tensor):
         """Reorders the cache for beam search, given the selected beam indices."""
         for layer_idx in range(len(self.key_cache)):
-            device = self.key_cache[layer_idx].device
-            self.key_cache[layer_idx] = self.key_cache[layer_idx].index_select(0, beam_idx.to(device))
-            device = self.value_cache[layer_idx].device
-            self.value_cache[layer_idx] = self.value_cache[layer_idx].index_select(0, beam_idx.to(device))
-
-            device = self.conv_states[layer_idx].device
-            self.conv_states[layer_idx] = self.conv_states[layer_idx].index_select(0, beam_idx.to(device))
-            device = self.ssm_states[layer_idx].device
-            self.ssm_states[layer_idx] = self.ssm_states[layer_idx].index_select(0, beam_idx.to(device))
+            self.key_cache[layer_idx] = self.key_cache[layer_idx].index_select(0, beam_idx)
+            self.value_cache[layer_idx] = self.value_cache[layer_idx].index_select(0, beam_idx)
+            self.conv_states[layer_idx] = self.conv_states[layer_idx].index_select(0, beam_idx)
+            self.ssm_states[layer_idx] = self.ssm_states[layer_idx].index_select(0, beam_idx)
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
@@ -212,7 +200,7 @@ class FalconHybridMambaAttentionDynamicCache(Cache):
 
 
 class FalconH1RotaryEmbedding(mindspore.nn.Cell):
-    def __init__(self, config: FalconH1Config, device=None):
+    def __init__(self, config: FalconH1Config):
         super().__init__()
         # BC: "rope_type" was originally "type"
         if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
@@ -225,22 +213,21 @@ class FalconH1RotaryEmbedding(mindspore.nn.Cell):
         self.config = config
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        inv_freq, self.attention_scaling = self.rope_init_fn(self.config)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
 
     @mindspore._no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def construct(self, x, position_ids):
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
+        inv_freq_expanded = self.inv_freq[None, :, None].float().broadcast_to(position_ids.shape[0], -1, 1)
         position_ids_expanded = position_ids[:, None, :].float()
 
-        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):  # Force float32
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
-            emb = mint.cat((freqs, freqs), dim=-1)
-            cos = emb.cos() * self.attention_scaling
-            sin = emb.sin() * self.attention_scaling
+        # Force float32 calculation
+        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+        emb = mint.cat((freqs, freqs), dim=-1)
+        cos = emb.cos() * self.attention_scaling
+        sin = emb.sin() * self.attention_scaling
 
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
@@ -256,11 +243,11 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
-        q (`torch.Tensor`): The query tensor.
-        k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`, *optional*):
+        q (`mindspore.Tensor`): The query tensor.
+        k (`mindspore.Tensor`): The key tensor.
+        cos (`mindspore.Tensor`): The cosine part of the rotary embedding.
+        sin (`mindspore.Tensor`): The sine part of the rotary embedding.
+        position_ids (`mindspore.Tensor`, *optional*):
             Deprecated and unused.
         unsqueeze_dim (`int`, *optional*, defaults to 1):
             The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
@@ -270,7 +257,7 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
             cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
             the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
     Returns:
-        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+        `tuple(mindspore.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
@@ -287,7 +274,7 @@ def repeat_kv(hidden_states: mindspore.Tensor, n_rep: int) -> mindspore.Tensor:
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
         return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    hidden_states = hidden_states[:, :, None, :, :].broadcast_to(batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
@@ -454,9 +441,7 @@ def reshape_into_chunks(input_tensor, pad_size, chunk_size):
         return input_tensor.reshape(input_tensor.shape[0], -1, chunk_size, input_tensor.shape[2])
     else:
         # [bsz, seq_len multiple of chunk_size, num_heads, head_dim or state_size] -> [bsz, -1, chunk_size, num_heads, head_dim or state_size]
-        return input_tensor.reshape(
-            input_tensor.shape[0], -1, chunk_size, input_tensor.shape[2], input_tensor.shape[3]
-        )
+        return input_tensor.reshape(input_tensor.shape[0], -1, chunk_size, input_tensor.shape[2], input_tensor.shape[3])
 
 
 def segment_sum(input_tensor):
@@ -466,7 +451,7 @@ def segment_sum(input_tensor):
     chunk_size = input_tensor.shape[-1]
     # 1. expand input tensor to have an additional dimension and repeat along that dimension
     # [..., chunk_size] -> [..., chunk_size, chunk_size]
-    input_tensor = input_tensor[..., None].expand(*input_tensor.shape, chunk_size)
+    input_tensor = input_tensor[..., None].broadcast_to(*input_tensor.shape, chunk_size)
     # 2. create a lower triangular mask with the diagonal set to 0 to 0 out elements above diag
     mask = mint.tril(mint.ones(chunk_size, chunk_size, dtype=mindspore.bool_), diagonal=-1)
     input_tensor = input_tensor.masked_fill(~mask, 0)
@@ -475,7 +460,7 @@ def segment_sum(input_tensor):
 
     # 4. apply mask to keep only the lower triangular part of the cumulative sum result (incl diagonal this time)
     mask = mint.tril(mint.ones(chunk_size, chunk_size, dtype=mindspore.bool_), diagonal=0)
-    tensor_segsum = tensor_segsum.masked_fill(~mask, -torch.inf)
+    tensor_segsum = tensor_segsum.masked_fill(~mask, -float("inf"))
     return tensor_segsum
 
 
@@ -582,201 +567,8 @@ class FalconH1Mixer(mindspore.nn.Cell):
         self.zxbcdt_multipliers = config.ssm_multipliers
         self.ssm_in_multiplier = config.ssm_in_multiplier
 
-    def cuda_kernels_forward(
-        self,
-        hidden_states: mindspore.Tensor,
-        cache_params: Optional[FalconHybridMambaAttentionDynamicCache] = None,
-        cache_position: Optional[mindspore.Tensor] = None,
-        attention_mask: Optional[mindspore.Tensor] = None,
-    ):
-        # 1. Gated MLP's linear projection
-        hidden_states = apply_mask_to_padding_states(hidden_states, attention_mask)
-        # Add Multipliers
-        hidden_states = hidden_states * self.ssm_in_multiplier
-        projected_states = self.in_proj(hidden_states)
-        projected_states = projected_states * self.mup_vector  # ADD Mup Multipliers
-        d_to_remove = 2 * self.intermediate_size + 2 * self.n_groups * self.ssm_state_size + self.num_heads
-
-        # Set up dimensions for reshapes later
-        batch_size, seq_len, _ = hidden_states.shape
-        groups_time_state_size = self.n_groups * self.ssm_state_size
-
-        use_precomputed_states = (
-            cache_params is not None
-            and cache_paramindspore.has_previous_state
-            and seq_len == 1
-            and cache_paramindspore.conv_states[self.layer_idx].shape[0]
-            == cache_paramindspore.ssm_states[self.layer_idx].shape[0]
-            == batch_size
-            and cache_position is not None
-            and cache_position[0] > 0
-        )
-
-        # getting projected states from cache if it exists
-        if use_precomputed_states:
-            d_mlp = (projected_states.squeeze(1).shape[-1] - d_to_remove) // 2
-
-            z0, x0, gate, hidden_states_B_C, dt = projected_states.squeeze(1).split(
-                [d_mlp, d_mlp, self.intermediate_size, self.conv_dim, self.num_heads], dim=-1
-            )
-
-            # 2. Convolution sequence transformation
-            hidden_states_B_C = causal_conv1d_update(
-                hidden_states_B_C,
-                cache_paramindspore.conv_states[self.layer_idx],
-                self.conv1d.weight.squeeze(1),
-                self.conv1d.bias,
-                self.activation,
-            )
-
-            hidden_states, B, C = mint.split(
-                hidden_states_B_C,
-                [self.intermediate_size, groups_time_state_size, groups_time_state_size],
-                dim=-1,
-            )
-
-            # 3. SSM transformation
-            A = -mint.exp(self.A_log.float())  # (nheads,)
-            A = A[:, None, ...][:, :, None].expand(-1, self.head_dim, self.ssm_state_size).to(dtype=mindspore.float32)
-            dt = dt[:, :, None].expand(-1, -1, self.head_dim)
-            dt_bias = self.dt_bias[:, None, ...].expand(-1, self.head_dim)
-            D = self.D[:, None, ...].expand(-1, self.head_dim)
-            B = B.view(batch_size, self.n_groups, B.shape[1] // self.n_groups)
-            C = C.view(batch_size, self.n_groups, C.shape[1] // self.n_groups)
-            hidden_states_reshaped = hidden_states.view(batch_size, self.num_heads, self.head_dim)
-            hidden_states = selective_state_update(
-                cache_paramindspore.ssm_states[self.layer_idx],
-                hidden_states_reshaped,
-                dt,
-                A,
-                B,
-                C,
-                D,
-                z=gate.view(batch_size, self.num_heads, self.head_dim) if not self.mamba_rms_norm else None,
-                dt_bias=dt_bias,
-                dt_softplus=True,
-            )
-            hidden_states = hidden_states.view(batch_size, self.num_heads * self.head_dim)
-
-            if self.mamba_rms_norm:
-                hidden_states = self.norm(hidden_states, gate)
-
-            if d_mlp > 0:
-                hidden_states = mint.cat([mint.nn.functional.silu(z0) * x0, hidden_states], dim=-1)
-
-            # 4. Final linear projection
-            out = self.out_proj(hidden_states[:, None, ...])
-        # Fused calculations or step by step if no initialized cache is found
-        else:
-            A = -mint.exp(self.A_log.float())  # (num_heads) or (intermediate_size, state_size)
-            dt_limit_kwargs = {} if self.time_step_limit == (0.0, float("inf")) else {"dt_limit": self.time_step_limit}
-
-            # 2-4. Fused kernel for conv1d, SSM, and the final projection
-            if self.training and cache_params is None:
-                out = mamba_split_conv1d_scan_combined(
-                    projected_states,
-                    self.conv1d.weight.squeeze(1),
-                    self.conv1d.bias,
-                    self.dt_bias,
-                    A,
-                    D=self.D,
-                    chunk_size=self.chunk_size,
-                    seq_idx=None,  # was seq_idx
-                    activation=self.activation,
-                    rmsnorm_weight=self.norm.weight if self.mamba_rms_norm else None,
-                    rmsnorm_eps=self.norm.variance_epsilon if self.mamba_rms_norm else None,
-                    outproj_weight=self.out_proj.weight,
-                    outproj_bias=self.out_proj.bias,
-                    headdim=self.head_dim,
-                    ngroups=self.n_groups,
-                    norm_before_gate=False,
-                    return_final_states=False,
-                    **dt_limit_kwargs,
-                )
-
-            else:
-                d_mlp = (
-                    projected_states.shape[-1]
-                    - 2 * self.intermediate_size
-                    - 2 * self.n_groups * self.ssm_state_size
-                    - self.num_heads
-                ) // 2
-                if attention_mask is not None:
-                    projected_states = projected_states * attention_mask[..., None]
-                _, gate, hidden_states_B_C, dt = projected_states.split(
-                    [
-                        2 * d_mlp,
-                        self.intermediate_size,
-                        self.conv_dim,
-                        self.num_heads,
-                    ],
-                    dim=-1,
-                )
-
-                if cache_params is not None:
-                    conv_states = mint.nn.functional.pad(
-                        hidden_states_B_C.permute(0, 2, 1),
-                        (self.conv_kernel_size - hidden_states_B_C.shape[-2], 0),
-                    )
-                    cache_paramindspore.update_conv_state(self.layer_idx, conv_states, cache_position)
-
-                time_step = mint.nn.functional.softplus(dt + self.dt_bias)
-                # 1D Convolution
-                if causal_conv1d_fn is None or self.activation not in ["silu", "swish"]:
-                    hidden_states_B_C = self.act(
-                        self.conv1d(hidden_states_B_C.transpose(1, 2)).transpose(1, 2)[:, :seq_len]
-                    )  # (B, L, self.d_inner + 2 * ngroups * d_state)
-                else:
-                    hidden_states_B_C = causal_conv1d_fn(
-                        x=hidden_states_B_C.transpose(1, 2),
-                        weight=self.conv1d.weight.squeeze(1),
-                        bias=self.conv1d.bias,
-                        activation=self.activation,
-                    ).transpose(1, 2)[:, :seq_len]
-
-                hidden_states, B, C = mint.split(
-                    hidden_states_B_C,
-                    [
-                        self.intermediate_size,
-                        groups_time_state_size,
-                        groups_time_state_size,
-                    ],
-                    dim=-1,
-                )
-
-                if attention_mask is not None and attention_mask.shape[1] > 1 and attention_mask.shape[0] > 1:
-                    # tune out hidden states for pad tokens, see https://github.com/state-spaces/mamba/issues/66
-                    dtype = hidden_states.dtype
-                    hidden_states = (hidden_states * attention_mask[:, :, None]).to(dtype)
-                # This is a hack to make sure multi-GPU inference works with HF accelerate
-                # see: https://github.com/Dao-AILab/flash-attention/issues/523 for more details
-                with torch.cuda:
-                    scan_output, ssm_state = mamba_chunk_scan_combined(
-                        hidden_states.view(batch_size, seq_len, -1, self.head_dim),
-                        time_step,
-                        A,
-                        B.view(batch_size, seq_len, self.n_groups, -1),
-                        C.view(batch_size, seq_len, self.n_groups, -1),
-                        chunk_size=self.chunk_size,
-                        D=self.D,
-                        z=None,
-                        seq_idx=None,
-                        return_final_states=True,
-                        **dt_limit_kwargs,
-                    )
-                if ssm_state is not None and cache_params is not None:
-                    cache_paramindspore.ssm_states[self.layer_idx].copy_(ssm_state)
-                scan_output = scan_output.view(batch_size, seq_len, -1)
-                # Multiply "gate" branch and apply extra normalization layer
-                if self.mamba_rms_norm:
-                    out = self.norm(scan_output, gate)
-                else:
-                    out = scan_output * mint.nn.functional.silu(gate)
-                out = self.out_proj(out)
-        return out
-
     # fmt: off
-    def torch_forward(
+    def forward(
         self,
         input_states,
         cache_params: Optional[FalconHybridMambaAttentionDynamicCache] = None,
@@ -798,10 +590,10 @@ class FalconH1Mixer(mindspore.nn.Cell):
 
         use_precomputed_states = (
             cache_params is not None
-            and cache_paramindspore.has_previous_state
+            and cache_params.has_previous_state
             and seq_len == 1
-            and cache_paramindspore.conv_states[self.layer_idx].shape[0]
-            == cache_paramindspore.ssm_states[self.layer_idx].shape[0]
+            and cache_params.conv_states[self.layer_idx].shape[0]
+            == cache_params.ssm_states[self.layer_idx].shape[0]
             == batch_size
             and cache_position is not None
             and cache_position[0] > 0
@@ -809,11 +601,11 @@ class FalconH1Mixer(mindspore.nn.Cell):
 
         # 2. Convolution sequence transformation
         if use_precomputed_states:
-            cache_paramindspore.conv_states[self.layer_idx] = cache_paramindspore.conv_states[self.layer_idx].roll(shifts=-1, dims=-1)
-            cache_paramindspore.conv_states[self.layer_idx][:, :, -1] = hidden_states_B_C[:, 0, :]
+            cache_params.conv_states[self.layer_idx] = cache_params.conv_states[self.layer_idx].roll(shifts=-1, dims=-1)
+            cache_params.conv_states[self.layer_idx][:, :, -1] = hidden_states_B_C[:, 0, :]
 
             # We need to guarantee that anything regarding the cache is on the same device
-            conv_states = cache_paramindspore.conv_states[self.layer_idx]
+            conv_states = cache_params.conv_states[self.layer_idx]
 
             hidden_states_B_C = mint.sum(
                 conv_states * self.conv1d.weight.squeeze(1), dim=-1
@@ -828,7 +620,7 @@ class FalconH1Mixer(mindspore.nn.Cell):
                 conv_states = mint.nn.functional.pad(
                     hidden_states_B_C_transposed, (self.conv_kernel_size - hidden_states_B_C_transposed.shape[-1], 0)
                 )
-                cache_paramindspore.conv_states[self.layer_idx].copy_(conv_states)
+                cache_params.conv_states[self.layer_idx].copy_(conv_states)
 
             hidden_states_B_C = self.act(self.conv1d(hidden_states_B_C.transpose(1, 2))[..., :seq_len].transpose(1, 2))
 
@@ -842,19 +634,16 @@ class FalconH1Mixer(mindspore.nn.Cell):
         # 3. SSM transformation
         A = -mint.exp(self.A_log.float())                            # [num_heads]
         if use_precomputed_states:
-            # We need to guarantee that anything regarding the cache is on the same device
-            cache_device = cache_paramindspore.ssm_states[self.layer_idx].device
-
             # Note: there is no need to pad parameter matrices here, as there is just one new token
             # for batched generation
             dt = dt[:, 0, :][:, None, ...]
-            dt = dt.transpose(1, 2).expand(batch_size, dt.shape[-1], self.head_dim)
+            dt = dt.transpose(1, 2).broadcast_to(batch_size, dt.shape[-1], self.head_dim)
             # [num_heads] -> [num_heads, head_dim]
-            dt_bias = self.dt_bias[..., None].expand(self.dt_bias.shape[0], self.head_dim)
+            dt_bias = self.dt_bias[..., None].broadcast_to(self.dt_bias.shape[0], self.head_dim)
 
             dt = mint.nn.functional.softplus(dt + dt_bias.to(dt.dtype))
             dt = mint.clamp(dt, self.time_step_limit[0], self.time_step_limit[1])
-            A = A[..., None, None].expand(self.num_heads, self.head_dim, self.ssm_state_size).to(dtype=mindspore.float32)
+            A = A[..., None, None].broadcast_to(self.num_heads, self.head_dim, self.ssm_state_size).to(dtype=mindspore.float32)
             # [bsz, num_heads, head_dim, state_size]
             dA = (mint.exp(dt[..., None] * A))
 
@@ -862,7 +651,7 @@ class FalconH1Mixer(mindspore.nn.Cell):
             # [bsz, n_groups * state_size] -> [bsz, n_groups, 1, state_size] ->
             # -> [bsz, n_groups, group to head repetition factor, state_size] -> [bsz, num_heads, state_size]
             B = B.reshape(batch_size, self.n_groups, -1)[..., None, :]
-            B = B.expand(batch_size, self.n_groups, self.num_heads // self.n_groups, B.shape[-1]).contiguous()
+            B = B.broadcast_to(batch_size, self.n_groups, self.num_heads // self.n_groups, B.shape[-1]).contiguous()
             B = B.reshape(batch_size, -1, B.shape[-1])
             # [bsz, num_heads, head_dim, state_size]
             dB = dt[..., None] * B[..., None, :]
@@ -873,18 +662,18 @@ class FalconH1Mixer(mindspore.nn.Cell):
             dBx = (dB * hidden_states[..., None])
 
             # State calculation
-            cache_paramindspore.ssm_states[self.layer_idx].copy_(
-                cache_paramindspore.ssm_states[self.layer_idx] * dA + dBx
+            cache_params.ssm_states[self.layer_idx].copy_(
+                cache_params.ssm_states[self.layer_idx] * dA + dBx
             )
 
             # Subsequent output
             # [bsz, n_groups * state_size] -> [bsz, num_heads, state_size]
             C = C.reshape(batch_size, self.n_groups, -1)[..., None, :]
-            C = C.expand(batch_size, self.n_groups, self.num_heads // self.n_groups, C.shape[-1]).contiguous()
+            C = C.broadcast_to(batch_size, self.n_groups, self.num_heads // self.n_groups, C.shape[-1]).contiguous()
             C = C.reshape(batch_size, -1, C.shape[-1])
             # [bsz, num_heads, head_dim]
 
-            ssm_states = cache_paramindspore.ssm_states[self.layer_idx].to(dtype=C.dtype)  # Shape: [b, h, d, n]
+            ssm_states = cache_params.ssm_states[self.layer_idx].to(dtype=C.dtype)  # Shape: [b, h, d, n]
             # Reshape ssm_states to merge the first two dimensions
             ssm_states_reshaped = ssm_states.view(batch_size * self.num_heads, self.head_dim, self.ssm_state_size)  # Shape: [b*h, d, n]
             C_reshaped = C.view(batch_size * self.num_heads, self.ssm_state_size, 1)  # Shape: [b*h, n, 1]
@@ -893,7 +682,7 @@ class FalconH1Mixer(mindspore.nn.Cell):
 
             # D skip connection
             # [num_heads] -> [num_heads, head_dim]
-            D = self.D[..., None].expand(self.D.shape[0], self.head_dim)
+            D = self.D[..., None].broadcast_to(self.D.shape[0], self.head_dim)
             y = (y + hidden_states * D).to(y.dtype)
 
             # [bsz, num_heads, head_dim] -> [bsz, 1, intermediate_size]
@@ -946,7 +735,7 @@ class FalconH1Mixer(mindspore.nn.Cell):
             # 3. Compute the inter-chunk SSM recurrence; produces correct SSM states at chunk boundaries
             # (middle term of factorization of off-diag blocks; A terms)
             if use_precomputed_states:
-                previous_states = cache_paramindspore.ssm_states[self.layer_idx][:, None, ...]
+                previous_states = cache_params.ssm_states[self.layer_idx][:, None, ...]
             else:
                 previous_states = mint.zeros_like(states[:, :1])
             states = mint.cat([previous_states, states], dim=1)
@@ -975,7 +764,7 @@ class FalconH1Mixer(mindspore.nn.Cell):
 
             # Init cache
             if ssm_state is not None and cache_params is not None:
-                cache_paramindspore.ssm_states[self.layer_idx].copy_(ssm_state)
+                cache_params.ssm_states[self.layer_idx].copy_(ssm_state)
 
         if self.mamba_rms_norm:
             scan_output = self.norm(y, gate)
@@ -996,14 +785,12 @@ class FalconH1Mixer(mindspore.nn.Cell):
         cache_position: Optional[mindspore.Tensor] = None,
         attention_mask: Optional[mindspore.Tensor] = None,
     ):
-        if is_fast_path_available and "cuda" in self.in_proj.weight.device.type:
-            return self.cuda_kernels_forward(hidden_states, cache_params, cache_position, attention_mask)
         dtype = hidden_states.dtype
         if attention_mask is not None and attention_mask.shape[1] > 1 and attention_mask.shape[0] > 1:
             # tune out hidden states for pad tokens, see https://github.com/state-spaces/mamba/issues/66
             hidden_states = (hidden_states * attention_mask[:, :, None]).to(dtype)
 
-        return self.torch_forward(hidden_states, cache_params, cache_position, attention_mask)
+        return self.forward(hidden_states, cache_params, cache_position, attention_mask)
 
 
 class FalconH1MLP(mindspore.nn.Cell):
@@ -1073,13 +860,15 @@ class FalconH1DecoderLayer(GradientCheckpointingLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[mindspore.Tensor] = None,
-        position_embeddings: Optional[tuple[mindspore.Tensor, mindspore.Tensor]] = None,  # necessary, but kept here for BC
+        position_embeddings: Optional[
+            tuple[mindspore.Tensor, mindspore.Tensor]
+        ] = None,  # necessary, but kept here for BC
         **kwargs,
     ) -> tuple[mindspore.Tensor, Optional[tuple[mindspore.Tensor, mindspore.Tensor]]]:
         """
         Args:
-            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
-            attention_mask (`torch.FloatTensor`, *optional*): attention mask of size
+            hidden_states (`mindspore.Tensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
+            attention_mask (`mindspore.Tensor`, *optional*): attention mask of size
                 `(batch, sequence_length)` where padding elements are indicated by 0.
             past_key_value (`FalconHybridMambaAttentionDynamicCache`, *optional*): cached past key and value projection states
             output_attentions (`bool`, *optional*):
@@ -1088,9 +877,9 @@ class FalconH1DecoderLayer(GradientCheckpointingLayer):
             use_cache (`bool`, *optional*):
                 If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding
                 (see `past_key_values`).
-            cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
+            cache_position (`mindspore.Tensor` of shape `(sequence_length)`, *optional*):
                 Indices depicting the position of the input sequence tokens in the sequence.
-            position_embeddings (`tuple[torch.FloatTensor, torch.FloatTensor]`, *optional*):
+            position_embeddings (`tuple[mindspore.Tensor, mindspore.Tensor]`, *optional*):
                 Tuple containing the cosine and sine positional embeddings of shape `(batch_size, seq_len, head_dim)`,
                 with `head_dim` being the embedding dimension of each attention head.
             kwargs (`dict`, *optional*):
@@ -1141,7 +930,6 @@ class FalconH1DecoderLayer(GradientCheckpointingLayer):
         return outputs
 
 
-@auto_docstring
 class FalconH1PreTrainedModel(PreTrainedModel):
     config: FalconH1Config
     base_model_prefix = "model"
@@ -1159,12 +947,12 @@ class FalconH1PreTrainedModel(PreTrainedModel):
                 continue
             if "layernorm" in name.lower() and "weight" in name:
                 # LayerNorm weights usually initialized to 1
-                param.data.fill_(1.0)
+                param.set_data(mint.ones(param.shape, dtype=param.dtype))
             elif "bias" in name:
-                param.data.zero_()
+                param.set_data(mint.zeros(param.shape, dtype=param.dtype))
             else:
                 try:
-                    param.data.normal_(mean=0.0, std=std)
+                    param.set_data(initializer(Normal(std), param.shape, param.dtype))
                 except Exception as e:
                     print(f"Skipping init for {name} due to error: {e}")
 
@@ -1181,7 +969,7 @@ def compute_mup_vector(config):
         config: FalconH1Config object
 
     Returns:
-        torch.Tensor: The computed MuP vector
+        mindspore.Tensor: The computed MuP vector
     """
     # We'll need some values from the config to compute the vector dimensions
     intermediate_size = (
@@ -1206,8 +994,6 @@ def compute_mup_vector(config):
     return mup_vector
 
 
-@auto_docstring
-# Adapted from transformers.models.jamba.modeling_jamba.JambaModel
 class FalconH1Model(FalconH1PreTrainedModel):
     def __init__(self, config: FalconH1Config):
         super().__init__(config)
@@ -1236,8 +1022,6 @@ class FalconH1Model(FalconH1PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @can_return_tuple
-    @auto_docstring
     def construct(
         self,
         input_ids: mindspore.Tensor = None,
@@ -1277,7 +1061,9 @@ class FalconH1Model(FalconH1PreTrainedModel):
             )
 
         if cache_position is None:
-            cache_position = mint.arange(hidden_states.shape[1], )
+            cache_position = mint.arange(
+                hidden_states.shape[1],
+            )
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
@@ -1390,16 +1176,11 @@ class FalconH1Model(FalconH1PreTrainedModel):
             batch_size=input_tensor.shape[0],
         )
 
-        if (
-            self.config._attn_implementation == "sdpa"
-            and attention_mask is not None
-            and attention_mask.device.type in ["cuda", "xpu", "npu"]
-            and not output_attentions
-        ):
+        if self.config._attn_implementation == "sdpa" and attention_mask is not None and not output_attentions:
             # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
             # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
             # Details: https://github.com/pytorch/pytorch/issues/110213
-            min_dtype = torch.finfo(dtype).min
+            min_dtype = float(mindspore.finfo(dtype).min)
             causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
 
         return causal_mask
@@ -1419,7 +1200,7 @@ class FalconH1Model(FalconH1PreTrainedModel):
         `(batch_size, key_value_length)`, or if the input `attention_mask` is already 4D, do nothing.
 
         Args:
-            attention_mask (`torch.Tensor`):
+            attention_mask (`mindspore.Tensor`):
                 A 2D attention mask of shape `(batch_size, key_value_length)` or a 4D attention mask of shape
                 `(batch_size, 1, query_length, key_value_length)`.
             sequence_length (`int`):
@@ -1427,24 +1208,29 @@ class FalconH1Model(FalconH1PreTrainedModel):
             target_length (`int`):
                 The target length: when generating with static cache, the mask should be as long as the static cache,
                 to account for the 0 padding, the part of the cache that is not filled yet.
-            dtype (`torch.dtype`):
+            dtype (`mindspore.dtype`):
                 The dtype to use for the 4D attention mask.
-            cache_position (`torch.Tensor`):
+            cache_position (`mindspore.Tensor`):
                 Indices depicting the position of the input sequence tokens in the sequence.
-            batch_size (`torch.Tensor`):
+            batch_size (`int`):
                 Batch size.
         """
         if attention_mask is not None and attention_mask.dim() == 4:
             # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
             causal_mask = attention_mask
         else:
-            min_dtype = torch.finfo(dtype).min
-            causal_mask = mindspore.ops.full(
-                (sequence_length, target_length), fill_value=min_dtype, dtype=dtype, )
+            min_dtype = float(mindspore.finfo(dtype).min)
+            causal_mask = mint.full(
+                (sequence_length, target_length),
+                fill_value=min_dtype,
+                dtype=dtype,
+            )
             if sequence_length != 1:
                 causal_mask = mint.triu(causal_mask, diagonal=1)
-            causal_mask *= mint.arange(target_length, ) > cache_position.reshape(-1, 1)
-            causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
+            causal_mask *= mint.arange(
+                target_length,
+            ) > cache_position.reshape(-1, 1)
+            causal_mask = causal_mask[None, None, :, :].broadcast_to(batch_size, 1, -1, -1)
             if attention_mask is not None:
                 causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
                 mask_length = attention_mask.shape[-1]
@@ -1460,7 +1246,6 @@ class FalconH1Model(FalconH1PreTrainedModel):
         return causal_mask
 
 
-@auto_docstring
 class FalconH1ForCausalLM(FalconH1PreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
@@ -1481,8 +1266,6 @@ class FalconH1ForCausalLM(FalconH1PreTrainedModel, GenerationMixin):
     def get_decoder(self):
         return self.model
 
-    @can_return_tuple
-    @auto_docstring
     def construct(
         self,
         input_ids: mindspore.Tensor = None,
@@ -1502,7 +1285,7 @@ class FalconH1ForCausalLM(FalconH1PreTrainedModel, GenerationMixin):
         Example:
 
         ```python
-        >>> from transformers import AutoTokenizer, FalconH1ForCausalLM
+        >>> from mindone.transformers import AutoTokenizer, FalconH1ForCausalLM
 
         >>> model = FalconH1ForCausalLM.from_pretrained("...")
         >>> tokenizer = AutoTokenizer.from_pretrained("...")
@@ -1572,10 +1355,7 @@ class FalconH1ForCausalLM(FalconH1PreTrainedModel, GenerationMixin):
         # Exception 3: with synced GPUs cache_position may go out of bounds, but we only want dummy token in that case.
         #              (we can't check exception 3 while compiling)
         if not empty_past_kv:
-            if (
-                inputs_embeds is not None  # Exception 1
-                or (is_torchdynamo_compiling() or cache_position[-1] >= input_ids.shape[1])  # Exception 3
-            ):
+            if inputs_embeds is not None or (cache_position[-1] >= input_ids.shape[1]):  # Exception 3
                 input_ids = input_ids[:, -cache_position.shape[0] :]
             elif input_ids.shape[1] != cache_position.shape[0]:  # Default case (the "else", a no op, is Exception 2)
                 input_ids = input_ids[:, cache_position]
@@ -1584,15 +1364,12 @@ class FalconH1ForCausalLM(FalconH1PreTrainedModel, GenerationMixin):
                 self.config,
                 input_ids.shape[0],
                 self.dtype,
-                devices=[
-                    self.model.layers[i].mamba.conv1d.weight.device for i in range(self.config.num_hidden_layers)
-                ],
             )
 
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
             position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 1)
+            position_ids = position_ids.masked_fill(attention_mask == 0, 1)
             if not empty_past_kv:
                 position_ids = position_ids[:, -input_ids.shape[1] :]
 
