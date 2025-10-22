@@ -390,6 +390,10 @@ from .models.led import (
     LEDModel,
     LEDPreTrainedModel,
 )
+from .models.lightglue import (
+    LightGlueForKeypointMatching,
+    LightGluePreTrainedModel,
+)
 from .models.levit import (
     LevitFeatureExtractor,
     LevitForImageClassification,
