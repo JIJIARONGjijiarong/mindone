@@ -390,10 +390,6 @@ from .models.led import (
     LEDModel,
     LEDPreTrainedModel,
 )
-from .models.lightglue import (
-    LightGlueForKeypointMatching,
-    LightGluePreTrainedModel,
-)
 from .models.levit import (
     LevitFeatureExtractor,
     LevitForImageClassification,
@@ -401,6 +397,7 @@ from .models.levit import (
     LevitModel,
     LevitPreTrainedModel,
 )
+from .models.lightglue import LightGlueForKeypointMatching, LightGluePreTrainedModel
 from .models.llama import LlamaForCausalLM, LlamaForSequenceClassification, LlamaModel, LlamaPreTrainedModel
 from .models.llava import LlavaConfig, LlavaForConditionalGeneration
 from .models.llava_next import (

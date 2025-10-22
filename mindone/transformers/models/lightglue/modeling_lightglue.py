@@ -18,14 +18,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mindspore import mint, nn
 from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
 import numpy as np
-import mindspore as ms
-
 from mint.nn.utils.rnn import pad_sequence
+
+import mindspore as ms
+from mindspore import mint, nn
 
 from ...activations import ACT2FN
 from ...modeling_flash_attention_utils import FlashAttentionKwargs
@@ -336,12 +336,12 @@ class LightGlueTransformerLayer(ms.nn.Cell):
         return descriptors, all_hidden_states, all_attentions
 
 
-def sigmoid_log_double_softmax(
-    similarity: ms.Tensor, matchability0: ms.Tensor, matchability1: ms.Tensor
-) -> ms.Tensor:
+def sigmoid_log_double_softmax(similarity: ms.Tensor, matchability0: ms.Tensor, matchability1: ms.Tensor) -> ms.Tensor:
     """create the log assignment matrix from logits and similarity"""
     batch_size, num_keypoints_0, num_keypoints_1 = similarity.shape
-    certainties = mint.nn.functional.logsigmoid(matchability0) + mint.nn.functional.logsigmoid(matchability1).transpose(1, 2)
+    certainties = mint.nn.functional.logsigmoid(matchability0) + mint.nn.functional.logsigmoid(matchability1).transpose(
+        1, 2
+    )
     scores0 = mint.nn.functional.log_softmax(similarity, 2)
     scores1 = mint.nn.functional.log_softmax(similarity.transpose(-1, -2).contiguous(), 2).transpose(-1, -2)
     scores = mint.full((batch_size, num_keypoints_0 + 1, num_keypoints_1 + 1), 0, dtype=similarity.dtype)
@@ -363,7 +363,13 @@ class LightGlueMatchAssignmentLayer(ms.nn.Cell):
         batch_size, num_keypoints, descriptor_dim = descriptors.shape
         # Final projection and similarity computation
         m_descriptors = self.final_projection(descriptors)
-        m_descriptors = m_descriptors / ms.Tensor(self.descriptor_dim, ) ** 0.25
+        m_descriptors = (
+            m_descriptors
+            / ms.Tensor(
+                self.descriptor_dim,
+            )
+            ** 0.25
+        )
         m_descriptors = m_descriptors.reshape(batch_size // 2, 2, num_keypoints, descriptor_dim)
         m_descriptors0 = m_descriptors[:, 0]
         m_descriptors1 = m_descriptors[:, 1]
@@ -373,7 +379,9 @@ class LightGlueMatchAssignmentLayer(ms.nn.Cell):
             mask0 = mask[:, 0].unsqueeze(-1)
             mask1 = mask[:, 1].unsqueeze(-1).transpose(-1, -2)
             mask = mask0 * mask1
-            similarity = similarity.masked_fill(mask == 0, ms.tensor(np.finfo(similarity.dtype).min, dtype=similarity.dtype))
+            similarity = similarity.masked_fill(
+                mask == 0, ms.tensor(np.finfo(similarity.dtype).min, dtype=similarity.dtype)
+            )
 
         # Compute matchability of descriptors
         matchability = self.matchability(descriptors)
@@ -428,14 +436,18 @@ def get_matches_from_scores(scores: ms.Tensor, threshold: float) -> tuple[ms.Ten
     matches1 = max1.indices
 
     # Mutual check for matches
-    indices0 = mint.arange(matches0.shape[1], )[None]
-    indices1 = mint.arange(matches1.shape[1], )[None]
+    indices0 = mint.arange(
+        matches0.shape[1],
+    )[None]
+    indices1 = mint.arange(
+        matches1.shape[1],
+    )[None]
     mutual0 = indices0 == matches1.gather(1, matches0)
     mutual1 = indices1 == matches0.gather(1, matches1)
 
     # Get matching scores and filter based on mutual check and thresholding
     max0 = max0.values.exp()
-    zero = ms.tensor(0, dtype = max0.dtype)
+    zero = ms.tensor(0, dtype=max0.dtype)
     matching_scores0 = mint.where(mutual0, max0, zero)
     matching_scores1 = mint.where(mutual1, matching_scores0.gather(1, matches1), zero)
     valid0 = mutual0 & (matching_scores0 > threshold)
@@ -501,7 +513,9 @@ class LightGlueForKeypointMatching(LightGluePreTrainedModel):
         self.width_confidence = config.width_confidence
 
         if self.descriptor_dim != self.keypoint_detector_descriptor_dim:
-            self.input_projection = mint.nn.Linear(self.keypoint_detector_descriptor_dim, self.descriptor_dim, bias=True)
+            self.input_projection = mint.nn.Linear(
+                self.keypoint_detector_descriptor_dim, self.descriptor_dim, bias=True
+            )
         else:
             self.input_projection = mint.nn.Identity()
 
@@ -653,9 +667,7 @@ class LightGlueForKeypointMatching(LightGluePreTrainedModel):
 
         # Prepare final matches and matching scores
         _matches = ms.ops.full((batch_size // 2, 2, num_keypoints), -1, dtype=matches.dtype)
-        _matching_scores = mint.zeros(
-            (batch_size // 2, 2, num_keypoints), dtype=matching_scores.dtype
-        )
+        _matching_scores = mint.zeros((batch_size // 2, 2, num_keypoints), dtype=matching_scores.dtype)
         # Fill the matches and matching scores for each image pair
         for i in range(batch_size // 2):
             _matches[i, 0, indices0[i]] = mint.where(
@@ -697,7 +709,9 @@ class LightGlueForKeypointMatching(LightGluePreTrainedModel):
         keypoints = keypoints.reshape(batch_size * 2, initial_num_keypoints, 2)
         mask = mask.reshape(batch_size * 2, initial_num_keypoints) if mask is not None else None
         descriptors = descriptors.reshape(batch_size * 2, initial_num_keypoints, self.keypoint_detector_descriptor_dim)
-        image_indices = mint.arange(batch_size * 2, )
+        image_indices = mint.arange(
+            batch_size * 2,
+        )
         # Keypoint normalization
         keypoints = normalize_keypoints(keypoints, height, width)
 
@@ -720,7 +734,10 @@ class LightGlueForKeypointMatching(LightGluePreTrainedModel):
         final_pruned_keypoints_indices = []
         final_pruned_keypoints_iterations = []
 
-        pruned_keypoints_indices = mint.arange(0, initial_num_keypoints, ).broadcast_to(batch_size * 2, -1)
+        pruned_keypoints_indices = mint.arange(
+            0,
+            initial_num_keypoints,
+        ).broadcast_to(batch_size * 2, -1)
         pruned_keypoints_iterations = mint.ones_like(pruned_keypoints_indices)
 
         for layer_index in range(self.num_layers):
@@ -728,7 +745,9 @@ class LightGlueForKeypointMatching(LightGluePreTrainedModel):
             if mask is not None:
                 extended_attention_mask = self.get_extended_attention_mask(mask, input_shape)
             else:
-                extended_attention_mask = mint.ones((batch_size, input_shape[-2]), )
+                extended_attention_mask = mint.ones(
+                    (batch_size, input_shape[-2]),
+                )
             layer_output = self.transformer_layers[layer_index](
                 descriptors,
                 keypoints,
@@ -795,28 +814,35 @@ class LightGlueForKeypointMatching(LightGluePreTrainedModel):
             if do_keypoint_pruning:
                 # Prune keypoints from the input of the transformer layers for the next iterations if the confidence of
                 # the keypoints is below a certain threshold.
-                descriptors, keypoints, pruned_keypoints_indices, mask, pruned_keypoints_iterations = (
-                    self._do_layer_keypoint_pruning(
-                        descriptors,
-                        keypoints,
-                        mask,
-                        pruned_keypoints_indices,
-                        pruned_keypoints_iterations,
-                        keypoint_confidences,
-                        layer_index,
-                    )
+                (
+                    descriptors,
+                    keypoints,
+                    pruned_keypoints_indices,
+                    mask,
+                    pruned_keypoints_iterations,
+                ) = self._do_layer_keypoint_pruning(
+                    descriptors,
+                    keypoints,
+                    mask,
+                    pruned_keypoints_indices,
+                    pruned_keypoints_iterations,
+                    keypoint_confidences,
+                    layer_index,
                 )
 
         if do_early_stop and do_keypoint_pruning:
             # Concatenate early stopped outputs together and perform final keypoint pruning
-            final_pruned_keypoints_indices, final_pruned_keypoints_iterations, matches, matching_scores = (
-                self._concat_early_stopped_outputs(
-                    early_stops_indices,
-                    final_pruned_keypoints_indices,
-                    final_pruned_keypoints_iterations,
-                    matches,
-                    matching_scores,
-                )
+            (
+                final_pruned_keypoints_indices,
+                final_pruned_keypoints_iterations,
+                matches,
+                matching_scores,
+            ) = self._concat_early_stopped_outputs(
+                early_stops_indices,
+                final_pruned_keypoints_indices,
+                final_pruned_keypoints_iterations,
+                matches,
+                matching_scores,
             )
             matches, matching_scores = self._do_final_keypoint_pruning(
                 final_pruned_keypoints_indices,
