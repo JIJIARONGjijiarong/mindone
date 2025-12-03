@@ -783,28 +783,28 @@ class EdgeTamVideoPreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         std = self.config.initializer_range
         if isinstance(module, (mint.nn.Linear, mint.nn.Conv2d, mint.nn.ConvTranspose2d)):
-            module.weight.data.normal_(mean=0.0, std=std)
+            module.weight.set_data(initializer(Normal(sigma=std, mean=0.0), module.weight.shape, module.weight.dtype))
             if module.bias is not None:
-                module.bias.data.zero_()
+                module.bias.set_data(initializer(Zero(), module.bias.shape, module.bias.dtype))
         elif isinstance(module, mint.nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
+            module.weight.set_data(initializer(Normal(sigma=std, mean=0.0), module.weight.shape, module.weight.dtype))
             if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
+                module.weight[module.padding_idx] = 0
         elif isinstance(module, (mint.nn.LayerNorm, EdgeTamVideoLayerNorm)):
-            module.weight.data.fill_(1.0)
-            module.bias.data.zero_()
+            module.weight.set_data(initializer(One(), module.weight.shape, module.weight.dtype))
+            module.bias.set_data(initializer(Zero(), module.bias.shape, module.bias.dtype))
         elif isinstance(module, EdgeTamVideoModel):
             if module.no_memory_positional_encoding is not None:
-                module.no_memory_positional_encoding.data.zero_()
+                module.no_memory_positional_encoding.set_data(initializer(Zero(), module.no_memory_positional_encoding.shape, module.no_memory_positional_encoding.dtype))
             if module.memory_temporal_positional_encoding is not None:
-                module.memory_temporal_positional_encoding.data.zero_()
+                module.memory_temporal_positional_encoding.set_data(initializer(Zero(), module.memory_temporal_positional_encoding.shape, module.memory_temporal_positional_encoding.dtype))
             if module.no_object_pointer is not None:
-                module.no_object_pointer.data.zero_()
+                module.no_object_pointer.set_data(initializer(Zero(), module.no_object_pointer.shape, module.no_object_pointer.dtype))
             if module.occlusion_spatial_embedding_parameter is not None:
-                module.occlusion_spatial_embedding_parameter.data.zero_()
+                module.occlusion_spatial_embedding_parameter.set_data(initializer(Zero(), module.occlusion_spatial_embedding_parameter.shape, module.occlusion_spatial_embedding_parameter.dtype))
         if isinstance(module, EdgeTamVideoMemoryFuserCXBlock):
             if module.scale is not None:
-                module.scale.data.zero_()
+                module.scale.set_data(initializer(Zero(), module.scale.shape, module.scale.dtype))
 
 
 class EdgeTamVideoInferenceCache:
@@ -1006,7 +1006,7 @@ class EdgeTamVideoInferenceSession:
             obj_idx (int): The index of the object.
             frame_idx (int): The index of the frame.
             output_key (Optional[str]): The key of the output. If None, the output is stored as a dictionary.
-            output_value (Optional[Union[torch.Tensor, dict]]): The value of the output.
+            output_value (Optional[Union[ms.Tensor, dict]]): The value of the output.
             is_conditioning_frame (bool): Whether the output is for a conditioning frame.
         """
         storage_key = "cond_frame_outputs" if is_conditioning_frame else "non_cond_frame_outputs"
@@ -1367,7 +1367,7 @@ def window_partition(hidden_state, window_size):
     Partition into non-overlapping windows with padding if needed.
 
     Args:
-        hidden_state (`torch.Tensor`):
+        hidden_state (`ms.Tensor`):
             Input tokens with [batch_size, height, width, num_channels].
         window_size (`int`):
             Window size.
@@ -1692,8 +1692,9 @@ class EdgeTamVideoPromptEncoder(ms.nn.Cell):
         if input_masks is not None:
             dense_embeddings = self.mask_embed(input_masks)
         else:
-            dense_embeddings = self.no_mask_embed.weight.reshape(1, -1, 1, 1).expand(
-                batch_size, -1, self.image_embedding_size[0], self.image_embedding_size[1]
+            target_shape = (batch_size, self.no_mask_embed.weight.shape[-1], self.image_embedding_size[0], self.image_embedding_size[1])
+            dense_embeddings = ms.ops.broadcast_to(
+                self.no_mask_embed.weight.reshape(1, -1, 1, 1), target_shape
             )
 
         return sparse_embeddings, dense_embeddings
@@ -1933,9 +1934,9 @@ class EdgeTamVideoMaskDecoder(ms.nn.Cell):
         multimask_iou_scores = all_iou_scores[:, :, 1:]
         best_scores_inds = mint.argmax(multimask_iou_scores, dim=-1)  # [B, P]
         best_scores_inds_expanded = best_scores_inds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-        best_scores_inds_expanded = best_scores_inds_expanded.expand(
-            -1, -1, 1, multimask_logits.shape[-2], multimask_logits.shape[-1]
-        )
+        target_shape = (best_scores_inds_expanded.shape[0], best_scores_inds_expanded.shape[1], 1,
+                        multimask_logits.shape[-2], multimask_logits.shape[-1])
+        best_scores_inds_expanded = ms.ops.broadcast_to(best_scores_inds_expanded, target_shape)
         best_multimask_logits = mint.gather(multimask_logits, 2, best_scores_inds_expanded)  # [B, P, 1, H, W]
         best_multimask_iou_scores = mint.gather(multimask_iou_scores, 2, best_scores_inds.unsqueeze(-1))  # [B, P, 1]
 
@@ -2271,8 +2272,8 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
 
         # Expand to batch size if needed
         if batch_size > 1:
-            vision_feats = vision_feats.expand(batch_size, -1, -1, -1)
-            vision_pos_embeds = [pe.expand(batch_size, -1, -1, -1) for pe in vision_pos_embeds]
+            vision_feats = ms.ops.broadcast_to(vision_feats, (batch_size, vision_feats.shape[1], vision_feats.shape[2], vision_feats.shape[3]))
+            vision_pos_embeds = [ms.ops.broadcast_to(pe, (batch_size, pe.shape[1], pe.shape[2], pe.shape[3])) for pe in vision_pos_embeds]
 
         return vision_feats, vision_pos_embeds
 
@@ -2692,7 +2693,7 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
             )
             sine_pe = get_1d_sine_pe(normalized_temporal_diffs, dim=pointer_tpos_dim).to(object_pointers.dtype)
             projected_sine_pe = self.temporal_positional_encoding_projection_layer(sine_pe)
-            object_pointers_pos_embed = projected_sine_pe.unsqueeze(1).expand(-1, batch_size, self.mem_dim)
+            object_pointers_pos_embed = ms.ops.broadcast_to(projected_sine_pe.unsqueeze(1), (projected_sine_pe.shape[0], batch_size, self.mem_dim))
         else:
             object_pointers_pos_embed = mint.zeros(
                 (len(temporal_offsets), batch_size, self.mem_dim), dtype=object_pointers.dtype
@@ -2991,9 +2992,9 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         # is predicted to be occluded (i.e. no object is appearing in the frame)
         if self.occlusion_spatial_embedding_parameter is not None:
             is_obj_appearing = (object_score_logits > 0).float()
-            maskmem_features += (1 - is_obj_appearing[..., None]) * self.occlusion_spatial_embedding_parameter[
-                ..., None, None
-            ].expand(*maskmem_features.shape)
+            maskmem_features += (1 - is_obj_appearing[..., None]) * ms.ops.broadcast_to(
+                self.occlusion_spatial_embedding_parameter[..., None, None], maskmem_features.shape
+            )
 
         maskmem_pos_enc = maskmem_pos_enc.to(pred_masks_high_res.dtype)
         maskmem_features, maskmem_pos_enc = self.spatial_perceiver(maskmem_features, maskmem_pos_enc)
