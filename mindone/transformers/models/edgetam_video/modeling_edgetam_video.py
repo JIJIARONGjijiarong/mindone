@@ -21,6 +21,7 @@
 
 import mindspore as ms
 from mindspore import mint, nn
+from mindspore.common.initializer import Normal, One, Zero, initializer
 import math
 from collections import OrderedDict
 from collections.abc import Iterator
@@ -120,20 +121,20 @@ class EdgeTamVideoMemoryFuserCXBlock(GradientCheckpointingLayer):
 @auto_docstring(custom_intro="Base class for the vision encoder's outputs.")
 class EdgeTamVideoVisionEncoderOutput(ModelOutput):
     r"""
-    last_hidden_state (`torch.FloatTensor` of shape `(batch_size, height, width, hidden_size)`):
+    last_hidden_state (`ms.Tensor` of shape `(batch_size, height, width, hidden_size)`):
         Sequence of hidden-states at the output of the last layer of the model.
-    fpn_hidden_states (`tuple(torch.FloatTensor)`):
-        Tuple of `torch.FloatTensor` (one for each feature level, from high to low resolution) of shape
+    fpn_hidden_states (`tuple(ms.Tensor)`):
+        Tuple of `ms.Tensor` (one for each feature level, from high to low resolution) of shape
         `(batch_size, hidden_size, height, width)`. Feature maps from the Feature Pyramid Network neck.
-    fpn_position_encoding (`tuple(torch.FloatTensor)`):
-        Tuple of `torch.FloatTensor` (one for each feature level, from high to low resolution) of shape
+    fpn_position_encoding (`tuple(ms.Tensor)`):
+        Tuple of `ms.Tensor` (one for each feature level, from high to low resolution) of shape
         `(batch_size, hidden_size, height, width)`. Positional encodings corresponding to the `fpn_hidden_states`.
-    hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-        Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
+    hidden_states (`tuple(ms.Tensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
+        Tuple of `ms.Tensor` (one for the output of the embeddings, if the model has an embedding layer, +
         one for the output of each stage) of shape `(batch_size, height, width, hidden_size)`. Hidden-states of the
         model at the output of each stage.
-    attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-        Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
+    attentions (`tuple(ms.Tensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
+        Tuple of `ms.Tensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
         sequence_length)`. Attentions weights after the attention softmax, used to compute the weighted average in
         the self-attention heads.
     """
@@ -270,7 +271,7 @@ def rotate_pairwise(x):
 
     This is an optimized version of the following more explicit implementation:
     ```python
-    x_rotated = torch.zeros_like(x, dtype=x.dtype, device=x.device)
+    x_rotated = mint.zeros_like(x, dtype=x.dtype)
     x_rotated[..., ::2] = -x[..., 1::2]
     x_rotated[..., 1::2] = x[..., ::2]
     return x_rotated
@@ -621,8 +622,8 @@ class EdgeTamVideoPositionEmbeddingSine(ms.nn.Cell):
     @compile_compatible_method_lru_cache(maxsize=2)
     def construct(
         self,
-        shape: torch.Size,
-        device: Union[torch.device, str],
+        shape: Union[tuple, list],
+        device: str,
         dtype: ms.dtype,
         mask: Optional[Tensor] = None,
     ) -> Tensor:
@@ -811,8 +812,8 @@ class EdgeTamVideoInferenceCache:
 
     def __init__(
         self,
-        inference_device: Union[torch.device, str] = "cpu",
-        inference_state_device: Union[torch.device, str] = "cpu",
+        inference_device: str = "cpu",
+        inference_state_device: str = "cpu",
         max_vision_features_cache_size: int = 1,
     ):
         self.inference_device = inference_device
@@ -863,19 +864,19 @@ class EdgeTamVideoInferenceSession:
     Manages video inference session parameters, state and cache.
 
     Args:
-        video (`torch.FloatTensor`, *optional*):
+        video (`ms.Tensor`, *optional*):
             The video to process. No need to provide when streaming.
         video_height (`int`, *optional*):
             The height of the video.
         video_width (`int`, *optional*):
             The width of the video.
-        inference_device (`torch.device`, *optional*, defaults to `"cpu"`):
+        inference_device (`str`, *optional*, defaults to `"cpu"`):
             The device to use for inference.
-        inference_state_device (`torch.device`, *optional*, defaults to `"cpu"`):
+        inference_state_device (`str`, *optional*, defaults to `"cpu"`):
             The device to store the inference state on.
-        video_storage_device (`torch.device`, *optional*, defaults to `"cpu"`):
+        video_storage_device (`str`, *optional*, defaults to `"cpu"`):
             The device to store the video on.
-        dtype (`torch.dtype`, *optional*, defaults to `"float32"`):
+        dtype (`ms.dtype`, *optional*, defaults to `"float32"`):
             The dtype to use for the video.
         max_vision_features_cache_size (`int`, *optional*, defaults to 1):
             The maximum number of vision features to cache.
@@ -886,9 +887,9 @@ class EdgeTamVideoInferenceSession:
         video: Optional[ms.Tensor] = None,
         video_height: Optional[int] = None,
         video_width: Optional[int] = None,
-        inference_device: Union[torch.device, str] = "cpu",
-        inference_state_device: Union[torch.device, str] = "cpu",
-        video_storage_device: Union[torch.device, str] = "cpu",
+        inference_device: str = "cpu",
+        inference_state_device: str = "cpu",
+        video_storage_device: str = "cpu",
         dtype: Union[ms.dtype, str] = "float32",
         max_vision_features_cache_size: int = 1,
     ):
@@ -1187,13 +1188,13 @@ class EdgeTamVideoMemoryAttention(ms.nn.Cell):
     ):
         """
         Args:
-            current_vision_features (`torch.FloatTensor`):
+            current_vision_features (`ms.Tensor`):
                 The current vision features used for self-attention.
-            memory (`torch.FloatTensor`):
+            memory (`ms.Tensor`):
                 The memory features used for cross-attention.
-            current_vision_position_embeddings (`torch.FloatTensor`, *optional*):
+            current_vision_position_embeddings (`ms.Tensor`, *optional*):
                 The position embeddings for the current vision features.
-            memory_posision_embeddings (`torch.FloatTensor`, *optional*):
+            memory_posision_embeddings (`ms.Tensor`, *optional*):
                 The position embeddings for the memory features.
             num_object_pointer_tokens (`int`, *optional*, defaults to 0):
                 The number of object pointer tokens.
@@ -1372,7 +1373,7 @@ def window_partition(hidden_state, window_size):
             Window size.
 
     Returns:
-        `tuple(torch.FloatTensor)` comprising various elements:
+        `tuple(ms.Tensor)` comprising various elements:
         - windows: windows after partition with [batch_size * num_windows, window_size, window_size, num_channels].
         - (padded_height, padded_width): padded height and width before partition
     """
@@ -1448,7 +1449,7 @@ class EdgeTamVideoPerceiverResampler(ms.nn.Cell):
     ) -> tuple[ms.Tensor, Optional[ms.Tensor]]:
         batch_size = hidden_states.shape[0]
 
-        latents = self.latents_1d.unsqueeze(0).expand(batch_size, -1, -1)
+        latents = ms.ops.broadcast_to(self.latents_1d.unsqueeze(0), (batch_size, self.latents_1d.shape[0], self.latents_1d.shape[1]))
         flattened_features = hidden_states.permute(0, 2, 3, 1).flatten(1, 2)
 
         positional_features = None
@@ -1469,7 +1470,7 @@ class EdgeTamVideoPerceiverResampler(ms.nn.Cell):
     def _forward_2d(self, hidden_states: ms.Tensor) -> tuple[ms.Tensor, ms.Tensor]:
         batch_size, channels, height, width = hidden_states.shape
 
-        latents_2d = self.latents_2d.unsqueeze(0).expand(batch_size, -1, -1).view(-1, 1, channels)
+        latents_2d = ms.ops.broadcast_to(self.latents_2d.unsqueeze(0), (batch_size, self.latents_2d.shape[0], self.latents_2d.shape[1])).view(-1, 1, channels)
 
         num_windows_per_dim = int(math.sqrt(self.num_latents_2d))
         window_size = height // num_windows_per_dim
@@ -1500,28 +1501,28 @@ class EdgeTamVideoPerceiverResampler(ms.nn.Cell):
 @auto_docstring(custom_intro="Base class for the EdgeTamVideo model's output.")
 class EdgeTamVideoImageSegmentationOutput(ModelOutput):
     r"""
-    iou_scores (`torch.FloatTensor` of shape `(batch_size, point_batch_size, num_masks)`):
+    iou_scores (`ms.Tensor` of shape `(batch_size, point_batch_size, num_masks)`):
         The Intersection over Union (IoU) scores of the predicted masks.
-    pred_masks (`torch.FloatTensor` of shape `(batch_size, point_batch_size, num_masks, height, width)`):
+    pred_masks (`ms.Tensor` of shape `(batch_size, point_batch_size, num_masks, height, width)`):
         The predicted low-resolution masks. This is an alias for `low_res_masks`. These masks need to be post-processed
         by the processor to be brought to the original image size.
-    object_score_logits (`torch.FloatTensor` of shape `(batch_size, point_batch_size, 1)`):
+    object_score_logits (`ms.Tensor` of shape `(batch_size, point_batch_size, 1)`):
         Logits for the object score, indicating if an object is present.
-    image_embeddings (`tuple(torch.FloatTensor)`):
-        The features from the FPN, which are used by the mask decoder. This is a tuple of `torch.FloatTensor` where each
+    image_embeddings (`tuple(ms.Tensor)`):
+        The features from the FPN, which are used by the mask decoder. This is a tuple of `ms.Tensor` where each
         tensor has shape `(batch_size, channels, height, width)`.
-    vision_hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True`):
-        Tuple of `torch.FloatTensor` (one for the output of each stage) of shape `(batch_size, height, width, hidden_size)`.
+    vision_hidden_states (`tuple(ms.Tensor)`, *optional*, returned when `output_hidden_states=True`):
+        Tuple of `ms.Tensor` (one for the output of each stage) of shape `(batch_size, height, width, hidden_size)`.
         Hidden-states of the vision model at the output of each stage.
-    vision_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True`):
-        Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`.
+    vision_attentions (`tuple(ms.Tensor)`, *optional*, returned when `output_attentions=True`):
+        Tuple of `ms.Tensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`.
         Attentions weights of the vision model.
-    mask_decoder_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True`):
-        Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`.
+    mask_decoder_attentions (`tuple(ms.Tensor)`, *optional*, returned when `output_attentions=True`):
+        Tuple of `ms.Tensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`.
         Attentions weights of the mask decoder.
-    high_res_masks (`torch.FloatTensor` of shape `(batch_size, point_batch_size, num_masks, image_size, image_size)`, *optional*):
+    high_res_masks (`ms.Tensor` of shape `(batch_size, point_batch_size, num_masks, image_size, image_size)`, *optional*):
         The predicted masks, upscaled to the original image size. Only used for EdgeTamVideoModel.
-    object_pointer (`torch.FloatTensor` of shape `(batch_size, point_batch_size, hidden_size)`, *optional*):
+    object_pointer (`ms.Tensor` of shape `(batch_size, point_batch_size, hidden_size)`, *optional*):
         A tensor representing the object pointer, used for tracking in videos. Only used for EdgeTamVideoModel.
     """
 
@@ -1541,7 +1542,7 @@ class EdgeTamVideoImageSegmentationOutput(ModelOutput):
 @auto_docstring(custom_intro="Base class for the Sam2 model's output.")
 class EdgeTamVideoSegmentationOutput(ModelOutput):
     r"""
-    pred_masks (`torch.FloatTensor` of shape `(batch_size, num_masks, height, width)`):
+    pred_masks (`ms.Tensor` of shape `(batch_size, num_masks, height, width)`):
         The predicted masks stored at the model's resolution.
     frame_idx (`int`):
         The frame index of the video.
@@ -2065,7 +2066,7 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         Returns the image embeddings by passing the pixel values through the vision encoder.
 
         Args:
-            pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
+            pixel_values (`ms.Tensor` of shape `(batch_size, num_channels, height, width)`):
                 Input pixel values
         """
         batch_size = pixel_values.shape[0]
@@ -2094,17 +2095,17 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         Returns the prompt embeddings by passing the input points, labels, boxes and masks through the prompt encoder.
 
         Args:
-            input_points (`torch.FloatTensor` of shape `(batch_size, point_batch_size, num_points_per_image, 2)`):
+            input_points (`ms.Tensor` of shape `(batch_size, point_batch_size, num_points_per_image, 2)`):
                 Optional input points for the prompt encoder. The padding of the point is automatically done by the
                 processor. `point_batch_size` refers to the number of masks that we want the model to predict per
                 point. The model will output `point_batch_size` times 3 masks in total.
-            input_labels (`torch.LongTensor` of shape `(batch_size, point_batch_size, num_points_per_image)`):
+            input_labels (`ms.Tensor` of shape `(batch_size, point_batch_size, num_points_per_image)`):
                 Optional input labels for the prompt encoder. The padding of the labels is automatically done by the
                 processor, or can be fed by the user.
-            input_boxes (`torch.FloatTensor` of shape `(batch_size, num_boxes_per_image, 4)`):
+            input_boxes (`ms.Tensor` of shape `(batch_size, num_boxes_per_image, 4)`):
                 Optional input boxes for the prompt encoder. The padding of the boxes is automatically done by the
                 processor. users can also pass manually the input boxes.
-            input_masks (`torch.LongTensor` of shape `(batch_size, image_size, image_size)`):
+            input_masks (`ms.Tensor` of shape `(batch_size, image_size, image_size)`):
                 Optional input masks for the prompt encoder.
         """
         prompt_output = self.prompt_encoder(
@@ -2214,15 +2215,15 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         Extract and preprocess image features using the vision encoder.
 
         Args:
-            pixel_values (`torch.FloatTensor`):
+            pixel_values (`ms.Tensor`):
                 Input pixel values of shape `(batch_size, num_channels, height, width)`.
 
         Returns:
             `tuple`: A tuple containing:
-                - feature_maps (`list[torch.Tensor]`): List of feature maps from different levels.
-                - feature_maps_position_embeddings (`list[torch.Tensor]`): List of positional embeddings for each feature level.
-                - vision_hidden_states (`tuple[torch.FloatTensor]`, *optional*): Hidden states from the vision encoder.
-                - vision_attentions (`tuple[torch.FloatTensor]`, *optional*): Attention weights from the vision encoder.
+                - feature_maps (`list[ms.Tensor]`): List of feature maps from different levels.
+                - feature_maps_position_embeddings (`list[ms.Tensor]`): List of positional embeddings for each feature level.
+                - vision_hidden_states (`tuple[ms.Tensor]`, *optional*): Hidden states from the vision encoder.
+                - vision_attentions (`tuple[ms.Tensor]`, *optional*): Attention weights from the vision encoder.
         """
         vision_outputs: EdgeTamVideoVisionEncoderOutput = self.vision_encoder(
             pixel_values,
@@ -2289,17 +2290,17 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         **kwargs: Unpack[TransformersKwargs],
     ) -> EdgeTamVideoImageSegmentationOutput:
         """
-        input_points (`torch.FloatTensor` of shape `(batch_size, num_points, 2)`):
+        input_points (`ms.Tensor` of shape `(batch_size, num_points, 2)`):
             Input 2D spatial points, this is used by the prompt encoder to encode the prompt. Generally yields to much
             better results. The points can be obtained by passing a list of list of list to the processor that will
-            create corresponding `torch` tensors of dimension 4. The first dimension is the image batch size, the
+            create corresponding `ms` tensors of dimension 4. The first dimension is the image batch size, the
             second dimension is the point batch size (i.e. how many segmentation masks do we want the model to predict
             per input point), the third dimension is the number of points per segmentation mask (it is possible to pass
             multiple points for a single mask), and the last dimension is the x (vertical) and y (horizontal)
             coordinates of the point. If a different number of points is passed either for each image, or for each
             mask, the processor will create "PAD" points that will correspond to the (0, 0) coordinate, and the
             computation of the embedding will be skipped for these points using the labels.
-        input_labels (`torch.LongTensor` of shape `(batch_size, point_batch_size, num_points)`):
+        input_labels (`ms.Tensor` of shape `(batch_size, point_batch_size, num_points)`):
             Input labels for the points, this is used by the prompt encoder to encode the prompt. According to the
             official implementation, there are 3 types of labels
 
@@ -2312,10 +2313,10 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
             - `-10`: the point is a padding point, thus should be ignored by the prompt encoder
 
             The padding labels should be automatically done by the processor.
-        input_boxes (`torch.FloatTensor` of shape `(batch_size, num_boxes, 4)`):
+        input_boxes (`ms.Tensor` of shape `(batch_size, num_boxes, 4)`):
             Input boxes for the points, this is used by the prompt encoder to encode the prompt. Generally yields to
             much better generated masks. The boxes can be obtained by passing a list of list of list to the processor,
-            that will generate a `torch` tensor, with each dimension corresponding respectively to the image batch
+            that will generate a `ms` tensor, with each dimension corresponding respectively to the image batch
             size, the number of boxes per image and the coordinates of the top left and bottom right point of the box.
             In the order (`x1`, `y1`, `x2`, `y2`):
 
@@ -2323,11 +2324,11 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
             - `y1`: the y coordinate of the top left point of the input box
             - `x2`: the x coordinate of the bottom right point of the input box
             - `y2`: the y coordinate of the bottom right point of the input box
-        input_masks (`torch.FloatTensor` of shape `(batch_size, image_size, image_size)`):
+        input_masks (`ms.Tensor` of shape `(batch_size, image_size, image_size)`):
             SAM model also accepts segmentation masks as input. The mask will be embedded by the prompt encoder to
             generate a corresponding embedding, that will be fed later on to the mask decoder. These masks needs to be
             manually fed by the user, and they need to be of shape (`batch_size`, `image_size`, `image_size`).
-        image_embeddings (`torch.FloatTensor` of shape `(batch_size, output_channels, window_size, window_size)`):
+        image_embeddings (`ms.Tensor` of shape `(batch_size, output_channels, window_size, window_size)`):
             Image embeddings, this is used by the mask decoder to generate masks and iou scores. For more memory
             efficient computation, users can first retrieve the image embeddings using the `get_image_embeddings`
             method, and then feed them to the `forward` method instead of feeding the `pixel_values`.
@@ -2335,10 +2336,10 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
             In the original implementation and paper, the model always outputs 3 masks per image (or per point / per
             bounding box if relevant). However, it is possible to just output a single mask, that corresponds to the
             "best" mask, by specifying `multimask_output=False`.
-        attention_similarity (`torch.FloatTensor`, *optional*):
+        attention_similarity (`ms.Tensor`, *optional*):
             Attention similarity tensor, to be provided to the mask decoder for target-guided attention in case the
             model is used for personalization as introduced in [PerSAM](https://huggingface.co/papers/2305.03048).
-        target_embedding (`torch.FloatTensor`, *optional*):
+        target_embedding (`ms.Tensor`, *optional*):
             Embedding of the target concept, to be provided to the mask decoder for target-semantic prompting in case
             the model is used for personalization as introduced in [PerSAM](https://huggingface.co/papers/2305.03048).
         """
@@ -2565,7 +2566,7 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
     def _build_memory_attention_inputs(
         self,
         temporal_positions_and_previous_outputs: list[tuple[int, dict]],
-        device: torch.device,
+        device: str,
     ) -> tuple[list[ms.Tensor], list[ms.Tensor]]:
         """
         Concatenate memory features and positional embeddings from previous frames.
@@ -2604,7 +2605,7 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         obj_idx: int,
         frame_idx: int,
         num_total_frames: int,
-        device: torch.device,
+        device: str,
         track_in_reverse_time: bool = False,
         streaming: bool = False,
     ) -> tuple[list[int], list[ms.Tensor], int]:
@@ -2666,7 +2667,7 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         max_object_pointers_to_use: int,
         batch_size: int,
         num_channels: int,
-        device: torch.device,
+        device: str,
     ) -> tuple[ms.Tensor, ms.Tensor]:
         """
         Process object pointers and compute their positional embeddings.
@@ -2693,8 +2694,8 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
             projected_sine_pe = self.temporal_positional_encoding_projection_layer(sine_pe)
             object_pointers_pos_embed = projected_sine_pe.unsqueeze(1).expand(-1, batch_size, self.mem_dim)
         else:
-            object_pointers_pos_embed = object_pointers.new_zeros(
-                len(temporal_offsets), batch_size, self.mem_dim, dtype=object_pointers.dtype
+            object_pointers_pos_embed = mint.zeros(
+                (len(temporal_offsets), batch_size, self.mem_dim), dtype=object_pointers.dtype
             )
 
         if self.mem_dim < num_channels:

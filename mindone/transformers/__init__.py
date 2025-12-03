@@ -470,6 +470,7 @@ from .models.efficientnet import (
     EfficientNetModel,
     EfficientNetPreTrainedModel,
 )
+from .models.edgetam_video import EdgeTamVideoModel, EdgeTamVideoPreTrainedModel
 from .models.electra import (
     ElectraForCausalLM,
     ElectraForMaskedLM,
