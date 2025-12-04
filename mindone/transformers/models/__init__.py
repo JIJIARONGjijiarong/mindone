@@ -68,6 +68,7 @@ from . import (
     dpr,
     dpt,
     efficientnet,
+    edgetam_video,
     electra,
     emu3,
     encodec,

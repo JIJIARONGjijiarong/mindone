@@ -88,6 +88,7 @@ MODEL_MAPPING_NAMES = OrderedDict(
         ("dpr", "DPRQuestionEncoder"),
         ("dpt", "DPTModel"),
         ("efficientnet", "EfficientNetModel"),
+        ("edgetam_video", "EdgeTamVideoModel"),
         ("electra", "ElectraModel"),
         ("encodec", "EncodecModel"),
         ("esm", "EsmModel"),

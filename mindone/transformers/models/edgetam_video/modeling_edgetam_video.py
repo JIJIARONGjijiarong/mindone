@@ -43,11 +43,10 @@ from ...modeling_layers import GradientCheckpointingLayer
 from ...modeling_outputs import BaseModelOutput
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
-from ...pytorch_utils import compile_compatible_method_lru_cache
-from ...utils import ModelOutput, auto_docstring
+from ...utils import ModelOutput
 from ...utils.generic import TransformersKwargs
 from ..auto import AutoModel
-from .configuration_edgetam_video import (
+from transformers import (
     EdgeTamVideoConfig,
     EdgeTamVideoMaskDecoderConfig,
     EdgeTamVideoPromptEncoderConfig,
@@ -118,7 +117,6 @@ class EdgeTamVideoMemoryFuserCXBlock(GradientCheckpointingLayer):
 
 
 @dataclass
-@auto_docstring(custom_intro="Base class for the vision encoder's outputs.")
 class EdgeTamVideoVisionEncoderOutput(ModelOutput):
     r"""
     last_hidden_state (`ms.Tensor` of shape `(batch_size, height, width, hidden_size)`):
@@ -771,7 +769,6 @@ class EdgeTamVideoFeedForward(ms.nn.Cell):
         return hidden_states
 
 
-@auto_docstring
 class EdgeTamVideoPreTrainedModel(PreTrainedModel):
     config_class = EdgeTamVideoConfig
     base_model_prefix = "edgetam_video"
@@ -1498,7 +1495,6 @@ class EdgeTamVideoPerceiverResampler(ms.nn.Cell):
 
 
 @dataclass
-@auto_docstring(custom_intro="Base class for the EdgeTamVideo model's output.")
 class EdgeTamVideoImageSegmentationOutput(ModelOutput):
     r"""
     iou_scores (`ms.Tensor` of shape `(batch_size, point_batch_size, num_masks)`):
@@ -1539,7 +1535,6 @@ class EdgeTamVideoImageSegmentationOutput(ModelOutput):
 
 
 @dataclass
-@auto_docstring(custom_intro="Base class for the Sam2 model's output.")
 class EdgeTamVideoSegmentationOutput(ModelOutput):
     r"""
     pred_masks (`ms.Tensor` of shape `(batch_size, num_masks, height, width)`):
@@ -1667,11 +1662,11 @@ class EdgeTamVideoPromptEncoder(ms.nn.Cell):
         Embeds different types of prompts, returning both sparse and dense embeddings.
 
         Args:
-            points (`torch.Tensor`, *optional*):
+            points (`ms.Tensor`, *optional*):
                 point coordinates and labels to embed.
-            boxes (`torch.Tensor`, *optional*):
+            boxes (`ms.Tensor`, *optional*):
                 boxes to embed
-            masks (`torch.Tensor`, *optional*):
+            masks (`ms.Tensor`, *optional*):
                 masks to embed
         """
         sparse_embeddings = None
@@ -1815,21 +1810,21 @@ class EdgeTamVideoMaskDecoder(ms.nn.Cell):
         Predict masks given image and prompt embeddings.
 
         Args:
-            image_embeddings (`torch.Tensor`):
+            image_embeddings (`ms.Tensor`):
                 The embeddings from the image encoder.
-            image_positional_embeddings (`torch.Tensor`):
+            image_positional_embeddings (`ms.Tensor`):
                 Positional encoding with the shape of image_embeddings.
-            sparse_prompt_embeddings (`torch.Tensor`):
+            sparse_prompt_embeddings (`ms.Tensor`):
                 The embeddings of the points and boxes.
-            dense_prompt_embeddings (`torch.Tensor`):
+            dense_prompt_embeddings (`ms.Tensor`):
                 The embeddings of the mask inputs.
             multimask_output (`bool`):
                 Whether to return multiple masks or a single mask.
-            high_resolution_features (`list[torch.Tensor]`, *optional*):
+            high_resolution_features (`list[ms.Tensor]`, *optional*):
                 The high-resolution features from the vision encoder.
-            attention_similarity (`torch.Tensor`, *optional*):
+            attention_similarity (`ms.Tensor`, *optional*):
                 The attention similarity tensor.
-            target_embedding (`torch.Tensor`, *optional*):
+            target_embedding (`ms.Tensor`, *optional*):
                 The target embedding.
         """
         batch_size, num_channels, height, width = image_embeddings.shape
@@ -1977,7 +1972,6 @@ def get_1d_sine_pe(pos_inds, dim, temperature=10000):
     return pos_embed
 
 
-@auto_docstring
 class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
     _tied_weights_keys = ["prompt_encoder.shared_embedding.positional_embedding"]
     # need to be ignored, as it's a buffer and will not be correctly detected as tied weight
@@ -2117,8 +2111,6 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         )
         return prompt_output
 
-    @torch.inference_mode()
-    @auto_docstring(custom_intro="Propagate the objects through a streamed video frame.")
     def construct(
         self,
         inference_session: EdgeTamVideoInferenceSession,
@@ -2132,7 +2124,7 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
         frame_idx (`int`, *optional*):
             The index of the frame on which to run inference. No need to provide when inferring
             on a new streamed frame.
-        frame (`torch.Tensor`, *optional*):
+        frame (`ms.Tensor`, *optional*):
             The frame to process. Provide when streaming.
         reverse (`bool`, *optional*, defaults to `False`):
             Whether to propagate in reverse.
@@ -2740,9 +2732,9 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
             is_initial_conditioning_frame (`bool`):
                 Whether this is an initial conditioning frame with user inputs (True) or a subsequent
                 tracking frame (False).
-            current_vision_features (`torch.Tensor`):
+            current_vision_features (`ms.Tensor`):
                 Highest-level vision features of shape `(seq_len, batch_size, channels)`.
-            current_vision_positional_embeddings (`torch.Tensor`):
+            current_vision_positional_embeddings (`ms.Tensor`):
                 Positional embedding tensors corresponding to the highest-level vision features.
             num_total_frames (`int`):
                 Total number of frames in the video sequence.
@@ -2752,7 +2744,7 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
                 Whether this is streaming inference mode.
 
         Returns:
-            `torch.Tensor`: Memory-conditioned feature tensor of shape `(batch_size, channels, height, width)`
+            `ms.Tensor`: Memory-conditioned feature tensor of shape `(batch_size, channels, height, width)`
                 suitable for input to the SAM decoder.
         """
         # Get dimensions from the highest-level (lowest-resolution) feature map
@@ -2868,13 +2860,13 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
                 Whether this is an initial conditioning frame with user inputs.
             point_inputs (`dict`, *optional*):
                 Point prompt inputs for the current frame.
-            mask_inputs (`torch.Tensor`, *optional*):
+            mask_inputs (`ms.Tensor`, *optional*):
                 Mask prompt inputs for the current frame.
             reverse (`bool`, *optional*, defaults to `False`):
                 Whether to track in reverse time order.
             run_mem_encoder (`bool`, *optional*, defaults to `True`):
                 Whether to run the memory encoder on predicted masks.
-            prev_sam_mask_logits (`torch.Tensor`, *optional*):
+            prev_sam_mask_logits (`ms.Tensor`, *optional*):
                 Previously predicted SAM mask logits that can be fed with new clicks.
             streaming (`bool`, *optional*, defaults to `False`):
                 Whether this is streaming inference.
@@ -3003,13 +2995,6 @@ class EdgeTamVideoModel(EdgeTamVideoPreTrainedModel):
 
         return maskmem_features, maskmem_pos_enc
 
-    @torch.inference_mode()
-    @auto_docstring(
-        custom_intro="""
-        Propagate the objects through the video frames. Used when initializing an inference session with a whole video.
-        Yields EdgeTamVideoSegmentationOutput for each frame.
-        """
-    )
     def propagate_in_video_iterator(
         self,
         inference_session: EdgeTamVideoInferenceSession,
