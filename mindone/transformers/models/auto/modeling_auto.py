@@ -39,6 +39,7 @@ MODEL_MAPPING_NAMES = OrderedDict(
         ("aria_text", "AriaTextModel"),
         ("audio-spectrogram-transformer", "ASTModel"),
         ("bamba", "BambaModel"),
+        ("mm-grounding-dino", "MMGroundingDinoModel"),
         ("bart", "BartModel"),
         ("beit", "BeitModel"),
         ("bert", "BertModel"),
@@ -117,6 +118,7 @@ MODEL_MAPPING_NAMES = OrderedDict(
         ("granitemoeshared", "GraniteMoeSharedModel"),
         ("groupvit", "GroupViTModel"),
         ("grounding-dino", "GroundingDinoModel"),
+        ("mm-grounding-dino", "MMGroundingDinoModel"),
         ("helium", "HeliumModel"),
         ("hiera", "HieraModel"),
         ("hubert", "HubertModel"),
@@ -782,6 +784,7 @@ MODEL_FOR_OBJECT_DETECTION_MAPPING_NAMES = OrderedDict(
         ("rt_detr_v2", "RTDetrV2ForObjectDetection"),
         ("table-transformer", "TableTransformerForObjectDetection"),
         ("yolos", "YolosForObjectDetection"),
+        ("mm-grounding-dino", "MMGroundingDinoForObjectDetection"),
     ]
 )
 

@@ -24,6 +24,7 @@ from . import (
     auto,
     aya_vision,
     bamba,
+    mm_grounding_dino,
     bark,
     bart,
     beit,

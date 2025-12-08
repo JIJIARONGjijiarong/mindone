@@ -43,6 +43,7 @@ CONFIG_MAPPING_NAMES = OrderedDict(
         ("audio-spectrogram-transformer", "ASTConfig"),
         ("aya_vision", "AyaVisionConfig"),
         ("bamba", "BambaConfig"),
+        ("mm-grounding-dino", "MMGroundingDinoConfig"),
         ("bart", "BartConfig"),
         ("beit", "BeitConfig"),
         ("bert", "BertConfig"),
